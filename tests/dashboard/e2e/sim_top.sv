@@ -39,13 +39,24 @@ hps_ext hps_ext
 	.dash_dout(STOCK ? 16'h0 : dash_dout), .dash_claim(STOCK ? 1'b0 : dash_claim)
 );
 
+// gen.sv PAUSED stand-in: follows the request after the bus-idle/phase-slot
+// wait (modelled as 50 cycles), like gen_clken's handshake.
+wire        pause_req;
+reg         frozen = 0;
+reg   [5:0] frz_cnt = 0;
+always @(posedge clk) begin
+	if (pause_req == frozen) frz_cnt <= 0;
+	else if (&frz_cnt) frozen <= pause_req;
+	else frz_cnt <= frz_cnt + 1'd1;
+end
+
 wire        mem_req, mem_we, mem_ack, mem_err;
 wire  [1:0] mem_be;
 wire  [7:0] mem_space;
 wire [15:1] mem_addr;
 wire [15:0] mem_wdata, mem_rdata;
 
-dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24)) dashboard_debug
+dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1)) dashboard_debug
 (
 	.clk(clk), .reset(1'b0),
 	.io_enable(ext_enable), .io_strobe(ext_strobe), .io_din(ext_din),
@@ -54,7 +65,7 @@ dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24)) dashboard_debug
 	.mem_req(mem_req), .mem_we(mem_we), .mem_be(mem_be), .mem_space(mem_space),
 	.mem_addr(mem_addr), .mem_wdata(mem_wdata), .mem_rdata(mem_rdata),
 	.mem_ack(mem_ack), .mem_err(mem_err), .mem_block(rom_download),
-	.pause_req(), .frozen(1'b0)
+	.pause_req(pause_req), .frozen(frozen)
 );
 
 wire [24:1] sdr_addr;

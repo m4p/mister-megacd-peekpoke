@@ -136,7 +136,11 @@ module gen
 	output        GG_AVAILABLE,
 
 	output [23:0] DBG_M68K_A,
-	output [23:0] DBG_MBUS_A
+	output [23:0] DBG_MBUS_A,
+
+	// Dashboard pause (docs/dashboard-control-design.md, step 1). Tie PAUSE_EN low when unused.
+	input         PAUSE_EN,
+	output        PAUSED
 );
 
 reg reset;
@@ -146,48 +150,28 @@ always @(posedge MCLK) if(M68K_CLKENn) reset <= ~RESET_N | LOADING;
 // CLOCK ENABLERS
 //--------------------------------------------------------------
 wire M68K_CLKEN = M68K_CLKENp;
-reg  M68K_CLKENp, M68K_CLKENn;
-reg  Z80_CLKENp, Z80_CLKENn;
+wire M68K_CLKENp, M68K_CLKENn;
+wire Z80_CLKENp, Z80_CLKENn;
 
-always @(negedge MCLK) begin
-	reg [3:0] VCLKCNT = 0;
-	reg [3:0] ZCLKCNT = 0;
+// Clock enables and the dashboard pause gate: see gen_clken.sv.
+reg  pause_hold = 0;    // driven by the main bus FSM below
+wire m68k_gate, z80_gate;
+assign PAUSED = pause_hold & m68k_gate & z80_gate;
 
-	if(~RESET_N | LOADING) begin
-		VCLKCNT <= 0;
-		ZCLKCNT = 0;
-		Z80_CLKENp <= 0;
-		Z80_CLKENn <= 0;
-		M68K_CLKENp <= 0;
-		M68K_CLKENn <= 1;
-	end
-	else begin
-		M68K_CLKENp <= 0;
-		VCLKCNT <= VCLKCNT + 1'b1;
-		if (VCLKCNT == 4'd6) begin
-			VCLKCNT <= 0;
-			M68K_CLKENp <= 1;
-		end
-
-		M68K_CLKENn <= 0;
-		if (VCLKCNT == 4'd3) begin
-			M68K_CLKENn <= 1;
-		end
-		
-		Z80_CLKENn <= 0;
-		ZCLKCNT <= ZCLKCNT + 1'b1;
-		if (ZCLKCNT == 14) begin
-			ZCLKCNT <= 0;
-			Z80_CLKENn <= 1;
-		end
-		
-		Z80_CLKENp <= 0;
-		if (ZCLKCNT == 7) begin
-			Z80_CLKENp <= 1;
-		end
-
-	end
-end
+gen_clken gen_clken
+(
+	.MCLK(MCLK),
+	.RESET_N(RESET_N),
+	.LOADING(LOADING),
+	.PAUSE_EN(PAUSE_EN),
+	.pause_hold(pause_hold),
+	.M68K_CLKENp(M68K_CLKENp),
+	.M68K_CLKENn(M68K_CLKENn),
+	.Z80_CLKENp(Z80_CLKENp),
+	.Z80_CLKENn(Z80_CLKENn),
+	.m68k_gate(m68k_gate),
+	.z80_gate(z80_gate)
+);
 
 reg [15:1] ram_rst_a;
 always @(posedge MCLK) ram_rst_a <= ram_rst_a + LOADING;
@@ -650,6 +634,7 @@ always @(posedge MCLK) begin
 		TIME_SEL <= 0;
 
 		RFS <= 0;
+		pause_hold <= 0;
 		//DBG_HOOK <= '0;
 		//rfs_pend <= 0;
 	end
@@ -664,7 +649,12 @@ always @(posedge MCLK) begin
 
 		case(mstate)
 		MBUS_IDLE:
-			begin
+			if (pause_hold || (PAUSE_EN && M68K_AS_N)) begin
+				// dashboard pause: start no new bus cycle (see CLOCK ENABLERS)
+				msrc <= MSRC_NONE;
+				pause_hold <= PAUSE_EN || m68k_gate || z80_gate;
+			end
+			else begin
 				msrc <= MSRC_NONE;
 				/*if (rfs_pend) begin
 					rfs_pend <= 0;

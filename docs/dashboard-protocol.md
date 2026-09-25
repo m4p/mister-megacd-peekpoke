@@ -219,7 +219,7 @@ If the bridge dies, Main issues `SESSION 0`, which releases input immediately.
 | 2 | `WORKRAM_WRITE` | **no**: requires `FREEZE` and the FX68K prefetch hook |
 | 3 | `VRAM_READ` | **no**: requires `FREEZE` to arbitrate the VDP port |
 | 4 | `VRAM_WRITE` | **no** |
-| 5 | `FREEZE` (pause/resume) | **no**: blocked on the feasibility gate |
+| 5 | `FREEZE` (pause/resume) | **yes, Genesis side** (control step 1: 68K, Z80, FM, PSG, bus; the Mega CD side follows in step 3) |
 | 6 | `STATE` (native savestates) | **no** |
 | 7 | `LOOPBACK` | yes |
 | 8 | `READ_COHERENT` | **no**: set only when reads execute under freeze |

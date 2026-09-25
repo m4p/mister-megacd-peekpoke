@@ -334,6 +334,8 @@ wire [15:0] dash_io_din;
 wire [15:0] dash_io_dout;
 wire        dash_io_claim;
 wire [11:0] dash_joy;
+wire        dash_pause_req;     // dashboard pause request (gen.sv PAUSE_EN)
+wire        gen_paused;         // Genesis side frozen (gen.sv PAUSED)
 
 wire        dash_sdr_busy;      // dashboard owns / is about to own SDRAM port 2 (look-ahead)
 wire        dash_sdr_own;       // dashboard owns SDRAM port 2 (registered)
@@ -566,7 +568,10 @@ gen gen
 	.GG_RESET(code_download && ioctl_wr && !ioctl_addr),
 	.GG_EN(status[24]),
 	.GG_CODE({~gg_code[95] & gg_code[128], gg_code[127:0]}),
-	.GG_AVAILABLE(gg_available1)
+	.GG_AVAILABLE(gg_available1),
+
+	.PAUSE_EN(dash_pause_req),
+	.PAUSED(gen_paused)
 );
 
 wire TRANSP_DETECT;
@@ -933,7 +938,7 @@ localparam [31:0] DASH_BUILD_ID = {8'h01,
 	DASH_BUILD_DATE[43:40], DASH_BUILD_DATE[35:32], DASH_BUILD_DATE[27:24],
 	DASH_BUILD_DATE[19:16], DASH_BUILD_DATE[11:8],  DASH_BUILD_DATE[3:0]};
 
-dashboard_debug #(.BUILD_ID(DASH_BUILD_ID)) dashboard_debug
+dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1)) dashboard_debug
 (
 	.clk(clk_sys),
 	.reset(RESET),
@@ -958,8 +963,8 @@ dashboard_debug #(.BUILD_ID(DASH_BUILD_ID)) dashboard_debug
 	.mem_err(dash_mem_err),
 	.mem_block(rom_download),
 
-	.pause_req(),
-	.frozen(1'b0)
+	.pause_req(dash_pause_req),
+	.frozen(gen_paused)
 );
 
 dashboard_sdram_port dashboard_sdram_port
@@ -994,6 +999,7 @@ dashboard_sdram_port dashboard_sdram_port
 assign dash_io_dout  = 0;
 assign dash_io_claim = 0;
 assign dash_joy      = 0;
+assign dash_pause_req = 0;
 assign dash_sdr_busy = 0;
 assign dash_sdr_own  = 0;
 assign dash_sdr_addr = 0;
