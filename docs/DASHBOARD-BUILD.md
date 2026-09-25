@@ -5,7 +5,7 @@ This guide covers the three artifacts that must be deployed **together**:
 | Artifact | Source | Built on |
 |---|---|---|
 | `MegaCD_Dashboard.rbf` | this repository, revision `MegaCD_Dashboard` | Linux/Windows x86-64 with Quartus 17.0.2 |
-| `MiSTer` (Main) | `Main_MiSTer` @ `aa271e41` + `patches/main_mister/` | x86-64 with `arm-none-linux-gnueabihf` GCC 10.2 |
+| `MiSTer` (Main) | `Main_MiSTer` release 20260912 (`47221c1`) + `patches/main_mister/` | x86-64 with `arm-none-linux-gnueabihf` GCC 10.2 |
 | `megacd-dashboard` (bridge) | `linux/dashboard-bridge/` | same ARM toolchain (static binary) |
 
 All three share protocol version 1 ([dashboard-protocol.md](dashboard-protocol.md)). The bridge
@@ -19,7 +19,7 @@ The workspace layout assumed below:
 
 ```text
 <root>/MegaCD_MiSTer     this repository
-<root>/Main_MiSTer       Main @ aa271e41 + dashboard patch
+<root>/Main_MiSTer       Main release 20260912 (47221c1) + dashboard patch
 <root>/Genesis-Plus-GX   dashboard.html
 ```
 
@@ -133,7 +133,7 @@ MegaCD_MiSTer/patches/main_mister/apply.sh --clone Main_MiSTer
 
 ```bash
 set -euo pipefail
-git -C Main_MiSTer rev-parse HEAD            # aa271e41ebbf616903f9e0216b0900aead5bfce1
+git -C Main_MiSTer rev-parse HEAD            # 47221c18987e101f50caafeb3b615f53b62722ca (release 20260912)
 git -C Main_MiSTer status --short            # user_io.cpp modified, support/megacd/dashboard_ipc.* added
 make -C Main_MiSTer
 file Main_MiSTer/bin/MiSTer                  # ELF 32-bit LSB executable, ARM, EABI5 ... hard-float

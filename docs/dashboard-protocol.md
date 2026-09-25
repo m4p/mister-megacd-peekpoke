@@ -18,7 +18,7 @@ and `Main_MiSTer/support/megacd/dashboard_ipc.h`. Change all three together and 
 |---|---|---|
 | `0x34` `UIO_CD_GET` | stock MegaCD | unchanged |
 | `0x35` `UIO_CD_SET` | stock MegaCD | unchanged |
-| **`0x70` `UIO_MCD_DASH`** | this protocol | unused by `Main_MiSTer` @ `aa271e41`, `sys/hps_io.sv`, and the core (audited 2026-09-25) |
+| **`0x70` `UIO_MCD_DASH`** | this protocol | unused by `Main_MiSTer` release 20260912 and `aa271e41`, `sys/hps_io.sv`, and the core (audited 2026-09-25) |
 
 `hps_ext.v` recognizes `0x34`, `0x35` and `0x70` explicitly. It never claims the bus for
 any other command. On a stock RBF, `0x70` is not claimed, so `hps_io` answers and the

@@ -19,7 +19,7 @@ Command blocks are labelled **build host**, **MiSTer** (an SSH shell as root), o
 |---|---|
 | Board | DE10-Nano + SDRAM module *(record model/size)* |
 | MiSTer Linux | *(record `uname -a`)* |
-| Main | `Main_MiSTer` `aa271e41` + dashboard patch, SHA-256 *(record)* |
+| Main | `Main_MiSTer` release 20260912 (`47221c1`) + dashboard patch; build 2026-09-25 SHA-256 `359ec1a5579aa93e6ab2e60cd276a9cb5643cb5655f1b8f894f07f0e97e7d93f` |
 | RBF | `MegaCD_Dashboard.rbf`, build ID `01yymmdd` shown by `/capabilities`, SHA-256 *(record)* |
 | Bridge | `megacd-dashboard 0.1.0 (protocol 1)` |
 | Quartus / ARM GCC | 17.0.2 / 10.2-2020.11 |

@@ -9,7 +9,8 @@
 - `user_io.cpp`: calls `dashboard_ipc_poll()` every poll iteration and
   `dashboard_ipc_core_changed()` whenever the core is re-identified.
 
-It was made against Main_MiSTer `aa271e41ebbf616903f9e0216b0900aead5bfce1`. The Makefile's
+It is made against Main_MiSTer **release 20260912** (`47221c18987e101f50caafeb3b615f53b62722ca`),
+so a patched Main differs from the official release only by the dashboard adapter. The Makefile's
 `support/*/*.cpp` wildcard picks up the new file, so no Makefile change is needed.
 
 ```bash

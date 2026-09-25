@@ -10,7 +10,7 @@ workspace this was written on has no Quartus installation and no MiSTer.
 |---|---|---|
 | `MegaCD_MiSTer` | `a3a3da81d04b22533def34f26eb9d748be9d2d0c` | clean |
 | `Genesis-Plus-GX` | `c6b400229ca99d26606c9257a31eed42102ff4cb` | untracked: `DASHBOARD-API.md`, `CHANGES-desertbus.md`, `.claude/`, `sdl/*.gp0`, `sdl/game.srm` (preserved, not modified except `DASHBOARD-API.md` §1/§5 as the plan requires) |
-| `Main_MiSTer` | `aa271e41ebbf616903f9e0216b0900aead5bfce1` (cloned 2026-09-25 from `github.com/MiSTer-devel/Main_MiSTer`) | `lib/miniz/ChangeLog.md` shows as modified on a clean clone: an upstream CRLF-versus-`.gitattributes eol=lf` artifact, not a local change |
+| `Main_MiSTer` | patch base: release 20260912, `47221c18987e101f50caafeb3b615f53b62722ca` (the Main deployed on the test MiSTer, byte-identical to `releases/MiSTer_20260912`). First developed on `aa271e41` (master, 2026-09-23); rebased so a patched Main differs from the release only by the adapter | `lib/miniz/ChangeLog.md` shows as modified on a clean clone: an upstream CRLF-versus-`.gitattributes eol=lf` artifact, not a local change |
 
 The unmodified API contract is preserved as
 [`reference/DASHBOARD-API.original.md`](reference/DASHBOARD-API.original.md).

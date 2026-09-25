@@ -314,7 +314,7 @@ index 0000000..8e78ba3
 +
 +#endif
 diff --git a/user_io.cpp b/user_io.cpp
-index d7a71a7..18372fa 100644
+index ca94d8b..bee5e6c 100644
 --- a/user_io.cpp
 +++ b/user_io.cpp
 @@ -36,6 +36,7 @@
@@ -325,7 +325,7 @@ index d7a71a7..18372fa 100644
  #ifdef PROFILING
  #include "profiling.h"
  #endif
-@@ -466,6 +467,7 @@ void user_io_read_core_name()
+@@ -457,6 +458,7 @@ void user_io_read_core_name()
  	is_neogeo_type = 0;
  	is_minimig_type = 0;
  	is_megacd_type = 0;
@@ -333,7 +333,7 @@ index d7a71a7..18372fa 100644
  	is_pce_type = 0;
  	is_archie_type = 0;
  	is_gba_type = 0;
-@@ -3947,6 +3949,7 @@ void user_io_poll()
+@@ -3850,6 +3852,7 @@ void user_io_poll()
  	}
  
  	if (is_megacd()) mcd_poll();

@@ -5,7 +5,7 @@
 # Idempotent: does nothing if the patch is already applied.
 set -euo pipefail
 
-PINNED=aa271e41ebbf616903f9e0216b0900aead5bfce1
+PINNED=47221c18987e101f50caafeb3b615f53b62722ca   # Main release 20260912
 HERE=$(cd "$(dirname "$0")" && pwd)
 PATCH=$HERE/0001-megacd-dashboard-ipc.patch
 
@@ -13,11 +13,11 @@ clone=0
 if [ "${1:-}" = "--clone" ]; then clone=1; shift; fi
 MAIN=${1:-$HERE/../../../Main_MiSTer}
 
-if [ "$clone" = 1 ] && [ ! -d "$MAIN/.git" ]; then
+if [ "$clone" = 1 ] && ! git -C "$MAIN" rev-parse --git-dir >/dev/null 2>&1; then
 	git clone https://github.com/MiSTer-devel/Main_MiSTer.git "$MAIN"
 	git -C "$MAIN" checkout -q "$PINNED"
 fi
-[ -d "$MAIN/.git" ] || { echo "no Main_MiSTer checkout at $MAIN (use --clone)" >&2; exit 1; }
+git -C "$MAIN" rev-parse --git-dir >/dev/null 2>&1 || { echo "no Main_MiSTer checkout at $MAIN (use --clone)" >&2; exit 1; }
 
 head=$(git -C "$MAIN" rev-parse HEAD)
 if [ "$head" != "$PINNED" ]; then

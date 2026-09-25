@@ -49,7 +49,7 @@ baseline build.
 
 ## 3. Linux (Main_MiSTer) state
 
-`support/megacd/megacd.h` `class cdd_t`, @ `aa271e41`, holds this logical state:
+`support/megacd/megacd.h` `class cdd_t`, @ release 20260912 (`47221c1`; unchanged in `aa271e41`), holds this logical state:
 
 | Field | Serialize as |
 |---|---|
