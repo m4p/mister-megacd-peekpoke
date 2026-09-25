@@ -1,0 +1,10 @@
+{
+  "_comment": "Engineering budget from MEGACD-DASHBOARD-PLAN.md section 7. Revise only from measured baseline headroom.",
+  "device": "5CSEBA6U23I7",
+  "max_alm_delta": 1500,
+  "max_ram_block_delta": 4,
+  "max_dsp_delta": 0,
+  "max_pll_delta": 0,
+  "min_alm_free_pct": 5.0,
+  "min_ram_block_free": 2
+}
