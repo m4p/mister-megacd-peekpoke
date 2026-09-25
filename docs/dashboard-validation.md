@@ -45,10 +45,30 @@ Tools: Icarus Verilog 13.0, Verilator 5.046, Apple clang, Python 3, Node, Chromi
 | `start.sh` on busybox | start / status / stop work; PID file correct |
 | Reconnect after core load | **bug found on hardware**: first request after Main's restart failed ("IPC not connected"). Fixed (stale-connection check + one retry on session loss); new e2e scenario fails on the old bridge and passes on the new one |
 
+## 2026-09-26: control milestone on hardware (steps 1–4)
+
+Build: `MegaCD_Dashboard` with pause (`gen_clken`), safe CPU writes and coherent reads,
+Mega CD freeze, and VRAM access (`gen_vram_dash`). RBF SHA-256 `d9b45446…4dba`. Main (release
+20260912 + adapter + CD barrier) SHA-256 `3f8107d5…8274`. The first compile of this build was
+interrupted twice by the VM closing; it was resumed from the completed synthesis database
+(`quartus_fit`, `quartus_asm`, `quartus_sta`).
+
+| Check | Result |
+|---|---|
+| Resources vs baseline | +735 ALMs (budget 1,500), +568 registers, +16,384 block-memory bits, +2 M10K, 0 DSP/PLL; 38.2 % ALMs free; `check_dashboard_reports.py` PASS |
+| Timing, 4 operating conditions | worst setup +0.225 ns, hold +0.041 ns, recovery +4.180 ns, removal +0.146 ns (all positive) |
+| Synthesis per module | `dashboard_debug` 940 LUT/458 FF + 16 Kbit M10K; `gen_vram_dash` 39/48; `gen_clken` 20/14; `dashboard_sdram_port` 21/49 |
+| Reboot with the new Main | autostart brings the bridge up and it reaches Main (deferred check from 2026-09-25: **done**) |
+| Reconnect after a core reload | first request `HTTP 200` (deferred check: **done**) |
+| `hw_control_test.py` | **26/26 PASS**: pause freezes distance counter and picture (two screenshots 2 s apart identical), resume moves both; Full Throttle Max executes in the running game (speed `$FFFF`) and restores; Steering Drift None stops the drift and restores; air freshener: 1056-byte upload, refresh token, badge signature FRESHY, visible on screen, restored |
+| `conformance.py --destructive` | 11 PASS, savestate UNSUPPORTED, Fullauto FAIL (no native state): **every non-savestate contract item passes**, incl. 35 patch-site writes with readback and restore |
+| Dashboard in the browser | connected over LAN; all non-savestate buttons enabled; badges read the live game; "Full Throttle: Normal" via the button (two-site patch, runs inside a dashboard-owned pause) |
+| `load_test.py` 60 s, 100 req/s, Wi-Fi | 100.0 req/s, 0 errors; read p50 7.2 / p95 9.9 / p99 13.4 ms (reads now run under a brief freeze; no measurable cost) |
+| One-hour autopilot run | **not done**: the browser pane was hidden (the dashboard's autopilot deliberately does not steer in a hidden tab), and the scripted stand-in (`hw_autopilot_soak.py`, the same algorithm) showed that repeated START taps in game states 4/5 after a stall leave Desert Bus for the game-selection menu. The stall sequence 3 → 1 → 2 → 4 happens without any input, so this is game behaviour, not the core; whether GPGX behaves the same needs the owner's comparison |
+
 ## Open (needs build host / hardware)
 
-- [ ] Reconnect fix verified on hardware (reload the core while the bridge runs)
 - [ ] Input latency measured on the pad (HTTP round trip is measured; frame placement is not)
-- [ ] `load_test.py` 300 s at 100 req/s; one-hour autopilot session with the browser dashboard
+- [ ] One-hour autopilot session with the browser dashboard visible; check the START recovery in game states 4/5 against GPGX
 - [ ] Wired-Ethernet latency comparison (optional)
 - [ ] Everything behind gates 2–4

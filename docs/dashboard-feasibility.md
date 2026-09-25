@@ -9,7 +9,7 @@ integration can and cannot do today, and why.
 |---|---|---|
 | 1. Baseline | **Passed** (2026-09-25) | Baseline and `MegaCD_Dashboard` built in the Ubuntu 16.04 VM (Quartus 17.0.0 Build 595); `check_dashboard_reports.py` passes (fit, budget, timing in all four corners). See [dashboard-baseline.md](dashboard-baseline.md) and [dashboard-validation.md](dashboard-validation.md). |
 | 2. Feasibility (freeze, prefetch re-fetch, state restore) | **Not run** | Needs gate 1 numbers and Quartus spikes; inventory started in [dashboard-state-inventory.md](dashboard-state-inventory.md). |
-| 3. Control | **Blocked** | Depends on gate 2 (freeze). The transport and input subset below is implemented and simulated but not fitted. |
+| 3. Control | **Passed on hardware** (2026-09-26) | Steps 1–4 fitted with timing met; pause, CPU patches, VRAM and every non-savestate conformance item pass on the MiSTer. See [dashboard-validation.md](dashboard-validation.md). |
 | 4. Full state | **Deferred** | Savestates are nice-to-have (§5). |
 
 **Consequence:** the package is at the **transport milestone, validated on hardware on
@@ -36,7 +36,7 @@ feature explicitly with HTTP 501 and `feature_unavailable`. Nothing is emulated.
 |---|---|---|---|---|---|---|
 | Unmodified baseline | 25,152 / 41,910 (60 %) | 33,332 | 535 / 553 (97 %) | 49 / 112 | +0.320 ns (HDMI PLL) / +0.157 ns (JTAG) | fit OK, timing met, hardware OK |
 | Transport/input (`MegaCD_Dashboard` revision, this code) | 25,737 (+585) | 33,918 (+586) | 537 (+2) | 49 (+0) | +0.293 / +0.071 ns (worst of 4 corners) | fit OK, timing met, budget OK, **hardware OK** |
-| Control milestone | — | — | — | — | — | not implemented |
+| Control milestone (steps 1–4) | 25,887 (+735) | 33,900 (+568) | 537 (+2) | 49 (+0) | +0.225 / +0.041 ns (worst of 4 corners) | fit OK, timing met, budget OK, **hardware OK** |
 | Full native state | — | — | — | — | — | not implemented |
 
 Expected footprint of the transport build, **an estimate to replace with the fit report**:

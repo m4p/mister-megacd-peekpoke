@@ -5,10 +5,11 @@
 > before this becomes the supported procedure. Expected outputs from hardware are marked
 > *(to confirm)*.
 >
-> **Milestone: transport.** This package gives live telemetry (all readouts and patch status
-> badges) and autopilot/START input from a second computer. It does **not** provide CPU
-> patches, the air freshener, pause, Save State, or Load Fullauto. The dashboard greys those
-> out, and the API answers `feature_unavailable`. See [dashboard-feasibility.md](dashboard-feasibility.md).
+> **Milestone: control** (validated on hardware 2026-09-26). This package gives live telemetry,
+> patch badges, autopilot and START input, **pause/resume, all CPU patches, and the air
+> freshener**, from a second computer. It does **not** provide Save State or Load Fullauto
+> (native savestates are deferred); the dashboard greys those out, and the API answers
+> `feature_unavailable`. See [dashboard-feasibility.md](dashboard-feasibility.md).
 
 Command blocks are labelled **build host**, **MiSTer** (an SSH shell as root), or
 **dashboard computer**.
