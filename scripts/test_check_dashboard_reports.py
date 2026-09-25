@@ -76,7 +76,7 @@ class T(unittest.TestCase):
             write(os.path.join(t, "cand"), "MegaCD_Dashboard", **cand)
             r = subprocess.run([sys.executable, CHECK, "--baseline", os.path.join(t, "base"),
                                 "--candidate", os.path.join(t, "cand"), "--revision", "MegaCD_Dashboard",
-                                "--budget", BUDGET], capture_output=True, text=True)
+                                "--budget", BUDGET], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True)
             return r.returncode, r.stdout
 
     def test_pass(self):

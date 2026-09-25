@@ -77,29 +77,29 @@ def find(dirpath, suffix, revision=None):
 def load(dirpath, revision, problems, label):
     fit_p = find(dirpath, ".fit.summary", revision)
     if not fit_p:
-        problems.append(f"{label}: no unique .fit.summary in {dirpath}")
+        problems.append("{0}: no unique .fit.summary in {1}".format(label, dirpath))
         return None
     rev = revision or os.path.basename(fit_p)[:-len(".fit.summary")]
     sta_p = find(dirpath, ".sta.summary", rev)
     flow_p = find(dirpath, ".flow.rpt", rev)
     fit = parse_fit(fit_p)
     if not sta_p:
-        problems.append(f"{label}: missing {rev}.sta.summary")
+        problems.append("{0}: missing {1}.sta.summary".format(label, rev))
     if not flow_p:
-        problems.append(f"{label}: missing {rev}.flow.rpt")
+        problems.append("{0}: missing {1}.flow.rpt".format(label, rev))
     sta = parse_sta(sta_p) if sta_p else []
     flow = kv(flow_p) if flow_p else {}
     if not fit["status"].startswith("Successful"):
-        problems.append(f"{label}: fitter status '{fit['status']}'")
+        problems.append("{0}: fitter status '{1}'".format(label, fit['status']))
     if flow and not flow.get("Flow Status", "").startswith("Successful"):
-        problems.append(f"{label}: flow status '{flow.get('Flow Status')}'")
+        problems.append("{0}: flow status '{1}'".format(label, flow.get('Flow Status')))
     if fit["revision"] and fit["revision"] != rev:
-        problems.append(f"{label}: fit summary is for revision {fit['revision']}, expected {rev}")
+        problems.append("{0}: fit summary is for revision {1}, expected {2}".format(label, fit['revision'], rev))
     for k in ("alm", "registers", "ram_blocks", "dsp", "pll"):
         if fit[k] is None:
-            problems.append(f"{label}: could not parse '{k}' from {fit_p}")
+            problems.append("{0}: could not parse '{1}' from {2}".format(label, k, fit_p))
     if sta_p and not sta:
-        problems.append(f"{label}: no timing entries in {sta_p}")
+        problems.append("{0}: no timing entries in {1}".format(label, sta_p))
     return {"rev": rev, "fit": fit, "sta": sta}
 
 
@@ -122,42 +122,42 @@ def main():
     bf, cf = base["fit"], cand["fit"]
     for label, f in (("baseline", bf), ("candidate", cf)):
         if f["device"] != budget["device"]:
-            problems.append(f"{label}: device {f['device']} != {budget['device']}")
+            problems.append("{0}: device {1} != {2}".format(label, f['device'], budget['device']))
 
     def delta(k):
         return None if cf[k] is None or bf[k] is None else cf[k] - bf[k]
 
     rows = [("ALMs", "alm"), ("Registers", "registers"), ("Block memory bits", "mem_bits"),
             ("RAM blocks (M10K)", "ram_blocks"), ("DSP blocks", "dsp"), ("PLLs", "pll")]
-    print(f"{'resource':20s} {'baseline':>12s} {'candidate':>12s} {'delta':>8s} {'available':>10s}")
+    print("{0:20s} {1:>12s} {2:>12s} {3:>8s} {4:>10s}".format('resource', 'baseline', 'candidate', 'delta', 'available'))
     for name, k in rows:
-        print(f"{name:20s} {str(bf[k]):>12s} {str(cf[k]):>12s} {str(delta(k)):>8s} {str(cf[k + '_avail']):>10s}")
+        print("{0:20s} {1:>12s} {2:>12s} {3:>8s} {4:>10s}".format(name, str(bf[k]), str(cf[k]), str(delta(k)), str(cf[k + '_avail'])))
 
     checks = (("alm", "max_alm_delta"), ("ram_blocks", "max_ram_block_delta"), ("dsp", "max_dsp_delta"), ("pll", "max_pll_delta"))
     for k, bk in checks:
         d = delta(k)
         if d is not None and d > budget[bk]:
-            problems.append(f"{k} grew by {d}, budget {budget[bk]}")
+            problems.append("{0} grew by {1}, budget {2}".format(k, d, budget[bk]))
     if cf["alm_avail"]:
         free = 100.0 * (cf["alm_avail"] - cf["alm"]) / cf["alm_avail"]
-        print(f"ALM free: {free:.1f}% (minimum {budget['min_alm_free_pct']}%)")
+        print("ALM free: {0:.1f}% (minimum {1}%)".format(free, budget['min_alm_free_pct']))
         if free < budget["min_alm_free_pct"]:
-            problems.append(f"only {free:.1f}% ALMs free")
+            problems.append("only {0:.1f}% ALMs free".format(free))
     if cf["ram_blocks_avail"] and cf["ram_blocks_avail"] - cf["ram_blocks"] < budget["min_ram_block_free"]:
         problems.append("RAM block headroom below minimum")
 
     print("\ntiming (candidate):")
     for e in cand["sta"]:
         flag = "" if e.get("slack", 0) >= 0 else "   <-- NEGATIVE"
-        print(f"  {e.get('slack', float('nan')):9.3f}  {e['type']}{flag}")
+        print("  {0:9.3f}  {1}{2}".format(e.get('slack', float('nan')), e['type'], flag))
         if "slack" not in e:
-            problems.append(f"no slack parsed for {e['type']}")
+            problems.append("no slack parsed for {0}".format(e['type']))
         elif e["slack"] < 0:
-            problems.append(f"negative slack {e['slack']} for {e['type']}")
-    kinds = {k for e in cand["sta"] for k in ("Setup", "Hold") if f" {k} " in f" {e['type']} "}
+            problems.append("negative slack {0} for {1}".format(e['slack'], e['type']))
+    kinds = {k for e in cand["sta"] for k in ("Setup", "Hold") if " {0} ".format(k) in " {0} ".format(e['type'])}
     for k in ("Setup", "Hold"):
         if k not in kinds:
-            problems.append(f"no {k} timing entries in candidate sta.summary")
+            problems.append("no {0} timing entries in candidate sta.summary".format(k))
 
     if problems:
         print("\n" + "\n".join("FAIL: " + p for p in problems))

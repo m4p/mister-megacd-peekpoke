@@ -36,6 +36,7 @@ if [ "$(uname -m)" != "x86_64" ]; then
 fi
 
 SUDO=""
+mkdir -p "$PREFIX" 2>/dev/null || true   # e.g. PREFIX=$HOME/toolchains needs no sudo
 if [ ! -w "$PREFIX" ] && [ "$(id -u)" -ne 0 ]; then SUDO=sudo; fi
 
 if command -v apt-get >/dev/null 2>&1; then

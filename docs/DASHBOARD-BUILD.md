@@ -25,8 +25,10 @@ The workspace layout assumed below:
 
 ## 1. Host tests (any Unix, no hardware)
 
-Tools: `make`, a C compiler, Python 3, `iverilog` ≥ 12, `verilator` ≥ 5, and `node` (fixture
-extraction only).
+Tools: `make`, a C compiler, Python ≥ 3.7, `iverilog` ≥ 12, `verilator` ≥ 5, and `node`
+(fixture extraction only). Ubuntu 16.04 ships Python 3.5, which is too old for these test
+tools. `scripts/check_dashboard_reports.py` and its self-test are kept compatible with 3.5,
+because they run on the Quartus build host.
 
 ```bash
 cd MegaCD_MiSTer

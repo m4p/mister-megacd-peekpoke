@@ -16,7 +16,7 @@
 #endif
 
 typedef struct {
-	char path[108];
+	char path[sizeof(((struct sockaddr_un *)0)->sun_path)];
 	int fd;
 	uint16_t next_id;
 	long long retry_at_ms;
@@ -54,7 +54,7 @@ static int ipc_connect(ipc_ctx *c)
 	struct sockaddr_un addr;
 	memset(&addr, 0, sizeof(addr));
 	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, c->path, sizeof(addr.sun_path) - 1);
+	memcpy(addr.sun_path, c->path, sizeof(addr.sun_path));   // same size, NUL-terminated by snprintf
 	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		close(fd);
 		c->backoff_ms = c->backoff_ms ? (c->backoff_ms * 2 > 2000 ? 2000 : c->backoff_ms * 2) : 100;
