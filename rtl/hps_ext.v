@@ -28,24 +28,35 @@ module hps_ext
 	output reg [48:0] cd_out,
 
 	input             cdda_ready,
-	input             cd_data_ready
+	input             cd_data_ready,
+
+	// Dashboard endpoint (command 0x70, see docs/dashboard-protocol.md).
+	// Tie dash_claim low when the dashboard is not built in.
+	output            ext_enable,
+	output            ext_strobe,
+	output     [15:0] ext_din,
+	input      [15:0] dash_dout,
+	input             dash_claim
 );
-
-assign EXT_BUS[15:0] = io_dout;
-wire [15:0] io_din = EXT_BUS[31:16];
-assign EXT_BUS[32] = dout_en;
-wire io_strobe = EXT_BUS[33];
-wire io_enable = EXT_BUS[34];
-
-localparam EXT_CMD_MIN = CD_GET;
-localparam EXT_CMD_MAX = CD_SET;
-
-localparam CD_GET = 'h34;
-localparam CD_SET = 'h35;
 
 reg [15:0] io_dout;
 reg        dout_en = 0;
 reg  [9:0] byte_cnt;
+
+// Commands are recognized explicitly; anything else is left to hps_io.
+assign EXT_BUS[15:0] = dash_claim ? dash_dout : io_dout;
+wire [15:0] io_din = EXT_BUS[31:16];
+assign EXT_BUS[32] = dout_en | dash_claim;
+wire io_strobe = EXT_BUS[33];
+wire io_enable = EXT_BUS[34];
+
+assign ext_enable = io_enable;
+assign ext_strobe = io_strobe;
+assign ext_din    = io_din;
+
+localparam CD_GET = 'h34;
+localparam CD_SET = 'h35;
+
 
 always@(posedge clk_sys) begin
 	reg [15:0] cmd;
@@ -70,7 +81,7 @@ always@(posedge clk_sys) begin
 
 		if(byte_cnt == 0) begin
 			cmd <= io_din;
-			dout_en <= (io_din >= EXT_CMD_MIN && io_din <= EXT_CMD_MAX);
+			dout_en <= (io_din == CD_GET || io_din == CD_SET);
 			if(io_din == CD_GET) io_dout <= cd_req; 
 		end else begin
 			case(cmd)

@@ -325,6 +325,24 @@ hps_io #(.CONF_STR(CONF_STR), .WIDE(1)) hps_io
 	.EXT_BUS(EXT_BUS)
 );
 
+////////////////////////////  DASHBOARD  ///////////////////////////////////
+// Remote Desert Bus dashboard endpoint: docs/dashboard-protocol.md.
+// Built only in the MegaCD_Dashboard revision (VERILOG_MACRO MEGACD_DASHBOARD).
+
+wire        dash_io_enable, dash_io_strobe;
+wire [15:0] dash_io_din;
+wire [15:0] dash_io_dout;
+wire        dash_io_claim;
+wire [11:0] dash_joy;
+
+wire        dash_sdr_busy;      // dashboard owns / is about to own SDRAM port 2 (look-ahead)
+wire        dash_sdr_own;       // dashboard owns SDRAM port 2 (registered)
+wire [24:1] dash_sdr_addr;
+wire [15:0] dash_sdr_din;
+wire        dash_sdr_rd, dash_sdr_wrl, dash_sdr_wrh;
+wire        sdr_busy2;
+wire [15:0] tmpram_din_w;       // SDRAM port-2 read data (shared with tmpram)
+
 wire [35:0] EXT_BUS;
 hps_ext hps_ext
 (
@@ -335,8 +353,15 @@ hps_ext hps_ext
 	.cdda_ready(MCD_CDDA_WR_READY),
 
 	.cd_in(cd_in),
-	.cd_out(cd_out)
+	.cd_out(cd_out),
+
+	.ext_enable(dash_io_enable),
+	.ext_strobe(dash_io_strobe),
+	.ext_din(dash_io_din),
+	.dash_dout(dash_io_dout),
+	.dash_claim(dash_io_claim)
 );
+
 
 reg dbg_menu = 0;
 always @(posedge clk_sys) begin
@@ -503,7 +528,7 @@ gen gen
 	.EN_SPR(EN_VDP_SPR),
 
 	.J3BUT(~status[5]),
-	.JOY_1(status[4] ^ status[46] ? joystick_1 : joystick_0),
+	.JOY_1((status[4] ^ status[46] ? joystick_1 : joystick_0) | dash_joy),
 	.JOY_2(status[4] ^ status[46] ? joystick_0 : joystick_1),
 	.JOY_3(joystick_2),
 	.JOY_4(joystick_3),
@@ -813,13 +838,14 @@ sdram sdram
 
 	//Load/Save: banks 0,1
 	.addr2( rom_download ? (rom_cart_mode ? {2'b00,ioctl_addr[22:1]} : {6'b011110,ioctl_addr[18:1]}) : //ROM  000000-7FFFFF/F00000-F7FFFF
+			  dash_sdr_own  ? dash_sdr_addr :                                          //dashboard WORK RAM 800000-80FFFF
 								  {5'b01110,tmpram_lba[9:0],tmpram_addr}),    //CART RAM E00000-EFFFFF for sd_*
-	.din2(rom_download ? {ioctl_data[7:0],ioctl_data[15:8]} : {tmpram_dout,tmpram_dout}),
-	.dout2(tmpram_din),
-	.rd2(~rom_download & tmpram_req & ~bk_loading),
-	.wrl2(rom_download ? ioctl_wait : (tmpram_req & bk_loading)),
-	.wrh2(rom_download ? ioctl_wait : (tmpram_req & bk_loading)),
-	.busy2(tmpram_busy)
+	.din2(rom_download ? {ioctl_data[7:0],ioctl_data[15:8]} : dash_sdr_own ? dash_sdr_din : {tmpram_dout,tmpram_dout}),
+	.dout2(tmpram_din_w),
+	.rd2((~rom_download & tmpram_req & ~bk_loading) | (~rom_download & dash_sdr_rd)),
+	.wrl2(rom_download ? ioctl_wait : ((tmpram_req & bk_loading) | dash_sdr_wrl)),
+	.wrh2(rom_download ? ioctl_wait : ((tmpram_req & bk_loading) | dash_sdr_wrh)),
+	.busy2(sdr_busy2)
 );
 
 
@@ -841,6 +867,10 @@ dpram_dif #(13,8,12,16) bram
 wire [7:0] tmpram_dout;
 wire [7:0] tmpram_din;
 wire       tmpram_busy;
+
+// The dashboard's port-2 accesses are invisible to the ROM loader and tmpram engine.
+assign tmpram_busy = sdr_busy2 & ~dash_sdr_own;
+assign tmpram_din  = tmpram_din_w[7:0];
 
 wire [15:0] tmpram_sd_buff_data;
 dpram_dif #(9,8,8,16) tmpram
@@ -875,8 +905,10 @@ always @(posedge clk_sys) begin
 	if(~tmpram_tx_start) {tmpram_addr, state, tmpram_tx_finish} <= 0;
 	else if(~tmpram_tx_finish) begin
 		if(!state) begin
-			tmpram_req <= 1;
-			state <= 1;
+			if(~dash_sdr_busy) begin   // wait for an in-flight dashboard access
+				tmpram_req <= 1;
+				state <= 1;
+			end
 		end
 		else if(tmpram_busy_d & ~tmpram_busy) begin
 			state <= 0;
@@ -885,6 +917,89 @@ always @(posedge clk_sys) begin
 		end
 	end
 end
+
+
+// Dashboard endpoint instances (declarations above hps_ext)
+`ifdef MEGACD_DASHBOARD
+wire        dash_mem_req, dash_mem_we, dash_mem_ack, dash_mem_err;
+wire  [1:0] dash_mem_be;
+wire  [7:0] dash_mem_space;
+wire [15:1] dash_mem_addr;
+wire [15:0] dash_mem_wdata, dash_mem_rdata;
+
+// BUILD_DATE is ASCII "yymmdd"; report it as BCD 0x01yymmdd (0x01 = dashboard RTL revision).
+localparam [47:0] DASH_BUILD_DATE = `BUILD_DATE;
+localparam [31:0] DASH_BUILD_ID = {8'h01,
+	DASH_BUILD_DATE[43:40], DASH_BUILD_DATE[35:32], DASH_BUILD_DATE[27:24],
+	DASH_BUILD_DATE[19:16], DASH_BUILD_DATE[11:8],  DASH_BUILD_DATE[3:0]};
+
+dashboard_debug #(.BUILD_ID(DASH_BUILD_ID)) dashboard_debug
+(
+	.clk(clk_sys),
+	.reset(RESET),
+
+	.io_enable(dash_io_enable),
+	.io_strobe(dash_io_strobe),
+	.io_din(dash_io_din),
+	.io_dout(dash_io_dout),
+	.io_claim(dash_io_claim),
+
+	.vblank(vblank),
+	.joy_inject(dash_joy),
+
+	.mem_req(dash_mem_req),
+	.mem_we(dash_mem_we),
+	.mem_be(dash_mem_be),
+	.mem_space(dash_mem_space),
+	.mem_addr(dash_mem_addr),
+	.mem_wdata(dash_mem_wdata),
+	.mem_rdata(dash_mem_rdata),
+	.mem_ack(dash_mem_ack),
+	.mem_err(dash_mem_err),
+	.mem_block(rom_download),
+
+	.pause_req(),
+	.frozen(1'b0)
+);
+
+dashboard_sdram_port dashboard_sdram_port
+(
+	.clk(clk_sys),
+	.reset(RESET),
+
+	.req(dash_mem_req),
+	.we(dash_mem_we),
+	.be(dash_mem_be),
+	.space(dash_mem_space),
+	.addr(dash_mem_addr),
+	.wdata(dash_mem_wdata),
+	.rdata(dash_mem_rdata),
+	.ack(dash_mem_ack),
+	.err(dash_mem_err),
+
+	.port_free(~rom_download & ~(tmpram_tx_start & ~tmpram_tx_finish) & ~tmpram_req & ~sdr_busy2),
+	.abort(rom_download),
+	.busy(dash_sdr_busy),
+	.owns(dash_sdr_own),
+
+	.sdr_addr(dash_sdr_addr),
+	.sdr_din(dash_sdr_din),
+	.sdr_rd(dash_sdr_rd),
+	.sdr_wrl(dash_sdr_wrl),
+	.sdr_wrh(dash_sdr_wrh),
+	.sdr_busy(sdr_busy2),
+	.sdr_dout(tmpram_din_w)
+);
+`else
+assign dash_io_dout  = 0;
+assign dash_io_claim = 0;
+assign dash_joy      = 0;
+assign dash_sdr_busy = 0;
+assign dash_sdr_own  = 0;
+assign dash_sdr_addr = 0;
+assign dash_sdr_din  = 0;
+assign {dash_sdr_rd, dash_sdr_wrl, dash_sdr_wrh} = 0;
+`endif
 
 
 //CD communication

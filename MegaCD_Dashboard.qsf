@@ -1,0 +1,10 @@
+# MegaCD_Dashboard revision: the stock MegaCD assignments plus the remote
+# dashboard endpoint (rtl/dashboard_debug.sv). Same device, clocks, sources and
+# constraints as MegaCD.qsf; only the MEGACD_DASHBOARD macro differs.
+#
+# Build: quartus_sh --flow compile MegaCD -c MegaCD_Dashboard
+# Keep new HDL registrations in files.qip, not here.
+
+source MegaCD.qsf
+
+set_global_assignment -name VERILOG_MACRO "MEGACD_DASHBOARD=1"
