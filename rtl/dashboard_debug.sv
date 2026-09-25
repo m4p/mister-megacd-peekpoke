@@ -131,26 +131,44 @@ reg  [7:0] b_qe, b_qo;
 reg        b_addr_d;
 wire [7:0] b_q = b_addr_d ? b_qo : b_qe;
 
-reg [7:0] stg_e[0:1023];
-reg [7:0] stg_o[0:1023];
+// Intel's single-clock true dual-port template: a read during a write on the
+// same port returns the new data. (Old-data behaviour is not supported by
+// Cyclone V M10K in true dual-port mode, and Quartus then builds the array
+// from registers.) No caller reads a port while writing it.
+(* ramstyle = "M10K" *) reg [7:0] stg_e[0:1023];
+(* ramstyle = "M10K" *) reg [7:0] stg_o[0:1023];
+
+wire [9:0] b_idx = b_addr[10:1];
 
 always @(posedge clk) begin
-	if(a_we) stg_e[a_addr] <= a_wdata[15:8];
-	a_qe <= stg_e[a_addr];
+	if(a_we) begin
+		stg_e[a_addr] <= a_wdata[15:8];
+		a_qe <= a_wdata[15:8];
+	end
+	else a_qe <= stg_e[a_addr];
 end
 always @(posedge clk) begin
-	if(b_we & ~b_addr[0]) stg_e[b_addr[10:1]] <= b_wdata;
-	b_qe <= stg_e[b_addr[10:1]];
+	if(b_we & ~b_addr[0]) begin
+		stg_e[b_idx] <= b_wdata;
+		b_qe <= b_wdata;
+	end
+	else b_qe <= stg_e[b_idx];
 end
 always @(posedge clk) begin
-	if(a_we) stg_o[a_addr] <= a_wdata[7:0];
-	a_qo <= stg_o[a_addr];
+	if(a_we) begin
+		stg_o[a_addr] <= a_wdata[7:0];
+		a_qo <= a_wdata[7:0];
+	end
+	else a_qo <= stg_o[a_addr];
 end
 always @(posedge clk) begin
-	if(b_we & b_addr[0]) stg_o[b_addr[10:1]] <= b_wdata;
-	b_qo <= stg_o[b_addr[10:1]];
-	b_addr_d <= b_addr[0];
+	if(b_we & b_addr[0]) begin
+		stg_o[b_idx] <= b_wdata;
+		b_qo <= b_wdata;
+	end
+	else b_qo <= stg_o[b_idx];
 end
+always @(posedge clk) b_addr_d <= b_addr[0];
 
 //------------------------------------------------------------------
 // Transaction / engine / input state

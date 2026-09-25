@@ -138,6 +138,10 @@ def main():
         d = delta(k)
         if d is not None and d > budget[bk]:
             problems.append("{0} grew by {1}, budget {2}".format(k, d, budget[bk]))
+    md = delta("mem_bits")
+    if md is not None and md < budget.get("min_mem_bits_delta", 0):
+        problems.append("block memory grew by {0} bits, expected at least {1}: "
+                        "a RAM was probably built from registers".format(md, budget["min_mem_bits_delta"]))
     if cf["alm_avail"]:
         free = 100.0 * (cf["alm_avail"] - cf["alm"]) / cf["alm_avail"]
         print("ALM free: {0:.1f}% (minimum {1}%)".format(free, budget['min_alm_free_pct']))

@@ -80,9 +80,14 @@ class T(unittest.TestCase):
             return r.returncode, r.stdout
 
     def test_pass(self):
-        rc, out = self.run_check(alm=31000, ram=303)
+        rc, out = self.run_check(alm=31000, ram=303, bits=2200000 + 16384)
         self.assertEqual(rc, 0, out)
         self.assertIn("PASS", out)
+
+    def test_ram_built_from_registers(self):
+        rc, out = self.run_check(alm=30900, ram=300, bits=2200000)
+        self.assertEqual(rc, 1)
+        self.assertIn("built from registers", out)
 
     def test_alm_budget(self):
         rc, out = self.run_check(alm=31600)

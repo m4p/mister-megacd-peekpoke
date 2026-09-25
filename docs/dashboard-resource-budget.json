@@ -6,5 +6,7 @@
   "max_dsp_delta": 0,
   "max_pll_delta": 0,
   "min_alm_free_pct": 5.0,
-  "min_ram_block_free": 2
+  "min_ram_block_free": 2,
+  "min_mem_bits_delta": 16384,
+  "_min_mem_bits_delta": "The 2 KiB staging buffer must land in block RAM; a smaller increase means Quartus built it from registers."
 }
