@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Self-test for check_dashboard_reports.py using synthetic Quartus 17 summaries.
 
-These fixtures follow the documented report layout; they are not real reports.
-Add the first real baseline's summaries here once a build host produces them.
+The fixtures copy the layout of the real Quartus 17.0 reports from the
+2026-09-25 builds (key/value .summary files, table-format .flow.rpt).
 """
 import os
 import subprocess
@@ -50,8 +50,14 @@ Slack : 12.001
 TNS   : 0.000
 """
 
-FLOW = """Flow Status : {status} - Thu Sep 25 12:00:00 2026
-Revision Name : {rev}
+# .flow.rpt uses Quartus's table layout (as in the real 17.0 reports)
+FLOW = """+-------------------------------------------------------------------------------+
+; Flow Summary                                                                  ;
++---------------------------------+---------------------------------------------+
+; Flow Status                     ; {status} - Thu Sep 25 12:00:00 2026          ;
+; Quartus Prime Version           ; 17.0.0 Build 595 04/25/2017 SJ Lite Edition ;
+; Revision Name                   ; {rev}                                        ;
++---------------------------------+---------------------------------------------+
 """
 
 

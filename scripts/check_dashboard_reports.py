@@ -9,9 +9,8 @@ Standard). Exits 1 on a missing/inconsistent report, a failed flow, a device
 mismatch, a budget violation, or any negative slack in the candidate.
 The baseline revision name is detected from its fit summary.
 
-Parser status: validated against synthetic reports in scripts/testdata that
-follow the documented Quartus 17 summary layout. Re-validate against the first
-real baseline before trusting a pass.
+Parser status: validated on the real Quartus 17.0.0 reports of the 2026-09-25
+baseline and MegaCD_Dashboard builds, and by test_check_dashboard_reports.py.
 """
 import argparse
 import glob
@@ -22,10 +21,13 @@ import sys
 
 
 def kv(path):
+    """Key/value pairs from a .summary ("Key : Value") or an .rpt table ("; Key ; Value ;")."""
     out = {}
     with open(path, errors="replace") as f:
         for line in f:
-            m = re.match(r"^\s*([^:;]+?)\s*:\s*(.*?)\s*$", line)
+            m = re.match(r"^;\s*([^;]+?)\s*;\s*([^;]*?)\s*;\s*$", line)
+            if not m:
+                m = re.match(r"^\s*([^:;]+?)\s*:\s*(.*?)\s*$", line)
             if m:
                 out.setdefault(m.group(1), m.group(2))
     return out
