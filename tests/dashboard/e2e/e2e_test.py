@@ -62,6 +62,7 @@ class Sim:
         self.proc = subprocess.Popen([binary, "--socket", sock, *extra], stdout=subprocess.PIPE, text=True, bufsize=1)
         self.lines = queue.Queue()
         self.joy = None
+        self.main_frozen = 0
         threading.Thread(target=self._reader, daemon=True).start()
         t0 = time.time()
         while time.time() - t0 < 30:
@@ -77,6 +78,8 @@ class Sim:
             line = line.strip()
             if line.startswith("JOY"):
                 self.joy = int(line.split()[1], 16)
+            if line.startswith("MAINFROZEN"):
+                self.main_frozen = int(line.split()[1])
             self.lines.put((time.time(), line) if line.startswith("JOY") else line)
 
     def wait_joy(self, value, timeout=3.0):
@@ -196,6 +199,10 @@ def main():
         check(st == 200 and j.get("paused") is True, "pause reports paused once frozen: %s" % j)
         st, j = b.get("/status")
         check(j.get("paused") is True, "/status shows paused")
+        t_end = time.time() + 2
+        while sim.main_frozen != 1 and time.time() < t_end:
+            time.sleep(0.01)
+        check(sim.main_frozen == 1, "Main sees FROZEN (CD barrier: mcd_poll stops the drive)")
         st, j = b.post("/pause")
         check(st == 200, "pause is idempotent")
         st, j = peek(b, 0xFF6FEA, 2)
@@ -210,6 +217,10 @@ def main():
         check(st == 200, "resume is idempotent")
         st, j = b.get("/status")
         check(j.get("paused") is False, "/status shows running")
+        t_end = time.time() + 2
+        while sim.main_frozen != 0 and time.time() < t_end:
+            time.sleep(0.01)
+        check(sim.main_frozen == 0, "Main sees running again (CD drive resumes)")
         st, j = b.post("/state/save", {"path": "123.gp0"})
         check(st == 501, "state save 501")
         st, j = b.post("/state/load", {"path": "desertbus-fullauto.gp0"})

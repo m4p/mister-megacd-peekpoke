@@ -219,7 +219,7 @@ If the bridge dies, Main issues `SESSION 0`, which releases input immediately.
 | 2 | `WORKRAM_WRITE` | **yes** (control step 2): written under freeze, away from the 68K's last instruction fetch (§8) |
 | 3 | `VRAM_READ` | **no**: requires `FREEZE` to arbitrate the VDP port |
 | 4 | `VRAM_WRITE` | **no** |
-| 5 | `FREEZE` (pause/resume) | **yes, Genesis side** (control step 1: 68K, Z80, FM, PSG, bus; the Mega CD side follows in step 3) |
+| 5 | `FREEZE` (pause/resume) | **yes, whole machine**: Genesis side (step 1), then the Mega CD side and Main's CD drive (step 3) |
 | 6 | `STATE` (native savestates) | **no** |
 | 7 | `LOOPBACK` | yes |
 | 8 | `READ_COHERENT` | **yes** (control step 2): work-RAM reads longer than one word run under freeze |

@@ -63,6 +63,31 @@ instruction can occur. See `docs/dashboard-protocol.md` §8 and `tests/dashboard
 never write there while driving, the 68K alone needs to be at a boundary; the whole-machine freeze
 then only matters for the user's pause.
 
+## 3a. Mega CD side (implemented, step 3)
+
+- `MCD.vhd`/`ASIC.vhd` get `FREEZE`/`FROZEN`. The ASIC's global `EN` becomes
+  `ENABLE and not FREEZE`, which stops its 12 MHz counter (the sub-68K's phase enables stop
+  without breaking their order), its timers, the graphics engine, the CDC and the PCM. The CD
+  audio block's enable, previously a constant `'1'`, becomes `not FREEZE`, so its FIFO stops
+  draining.
+- **The program-RAM state machine keeps running on `ENABLE`.** Its handshake with SDRAM port 0
+  waits for busy to rise and then fall. Frozen in between, it would lose the handshake and hang
+  the sub-CPU. `tests/dashboard/tb_asic_freeze.vhd` shows exactly that when it is gated by
+  `EN`. While frozen it finishes an access in flight but starts none from idle; otherwise a
+  completed CDC DMA write would repeat in a loop.
+- `FROZEN` = frozen, neither state machine waiting on SDRAM, and port 0 not busy.
+- `MegaCD.sv` freezes the Mega CD only **after** the Genesis side reports `PAUSED`. A main-CPU
+  access into the Mega CD therefore cannot be left waiting on a frozen ASIC, which would stop
+  the Genesis side from ever reaching its idle point. The endpoint's `frozen` is both sides.
+- **Main's CD barrier:** `mcd_poll()` returns early while `dashboard_ipc_frozen()` (a 2-word
+  `PROBE` with generation 0, no side effects) reports frozen. A stock RBF answers 0 for command
+  `0x70`, so stock behaviour is unchanged.
+
+Test coverage: `tb_asic_freeze` runs the real ASIC with an SDRAM port-0 model through random
+freezes during sub-CPU program-RAM reads and writes (no lost handshake, correct data, no access
+starting while `FROZEN`, nothing in flight when `FROZEN`). It does not exercise CDC DMA into
+program RAM; the idle-state guard for that path is checked by review only.
+
 ## 4. VRAM access
 
 The staging, protocol, and bridge side exist (`VRAM_READ`/`VRAM_WRITE` feature bits, the GPGX byte

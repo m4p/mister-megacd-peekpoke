@@ -11,6 +11,11 @@ entity ASIC is
 		CLK				: in std_logic;
 		RST_N				: in std_logic;
 		ENABLE			: in std_logic;
+		-- Dashboard freeze (docs/dashboard-control-design.md, step 3): stops the
+		-- sub side like ENABLE, but lets program-RAM SDRAM accesses in flight
+		-- finish. FROZEN: frozen and no SDRAM access in flight.
+		FREEZE			: in std_logic := '0';
+		FROZEN			: out std_logic;
 		
 		S68K_A   		: in std_logic_vector(23 downto 1);
 		S68K_DI			: in std_logic_vector(15 downto 0);
@@ -296,7 +301,7 @@ architecture rtl of ASIC is
 			
 begin
 
-	EN <= ENABLE;
+	EN <= ENABLE and not FREEZE;
 	
 	process( CLK )
 	begin
@@ -1314,7 +1319,10 @@ begin
 			PRG_RAM_RFS_TIMER <= (others => '0');
 			PRG_RAM_RFS_SCHED <= '0';
 		elsif rising_edge(CLK) then
-			if EN = '1' then
+			-- ENABLE, not EN: during a freeze, SDRAM accesses already started still
+			-- complete (their handshake would otherwise be lost); new ones do not
+			-- start (FREEZE checks in the idle states).
+			if ENABLE = '1' then
 				PRG_RAM_RFS_TIMER <= PRG_RAM_RFS_TIMER + 1;
 --				if PRG_RAM_RFS_TIMER = "0101111111" then		-- ~15us
 --					PRG_RAM_RFS_TIMER <= (others => '0');
@@ -1323,7 +1331,9 @@ begin
 				
 				case PRMS is
 					when PRS_IDLE =>
-						if SBRQ = '0' and SRES = '1' then
+						if FREEZE = '1' then
+							null;
+						elsif SBRQ = '0' and SRES = '1' then
 							if M68K_PRG_RAM_SEL = '1' and M68K_PRGRAM_DTACK_N = '1' then
 								M68K_PRGRAM_DTACK_N <= '0';
 								PRMS <= PRS_END;
@@ -1408,7 +1418,9 @@ begin
 --							PRG_RAM_RFS <= '1';
 --							PRSS <= PRS_REFRESH_WAIT;
 --						els
-						if DMA_PRG_RAM_SEL = '1' and SBRQ = '0' and SRES = '1' then
+						if FREEZE = '1' then
+							null;
+						elsif DMA_PRG_RAM_SEL = '1' and SBRQ = '0' and SRES = '1' then
 							PRG_RAM_ADDR <= DMA_ADDR;
 							PRG_RAM_DO <= DMA_DAT;
 							if DMA_ADDR(18 downto 9) >= "00"&WP then
@@ -1523,7 +1535,14 @@ begin
 		end if;
 	end process;
 	
-	PRAM_N <= '0' when PRMS /= PRS_IDLE or PRSS /= PRS_IDLE else '1';	
+	PRAM_N <= '0' when PRMS /= PRS_IDLE or PRSS /= PRS_IDLE else '1';
+
+	FROZEN <= '1' when FREEZE = '1' and PRG_RDY = '1' and   -- a write's busy may outlast PRS_WRITE
+	                   PRMS /= PRS_WAIT and PRMS /= PRS_READ and PRMS /= PRS_WRITE and
+	                   PRMS /= PRS_REFRESH_WAIT and PRMS /= PRS_REFRESH and
+	                   PRSS /= PRS_WAIT and PRSS /= PRS_READ and PRSS /= PRS_WRITE and
+	                   PRSS /= PRS_DMA_WAIT and PRSS /= PRS_DMA_WRITE and
+	                   PRSS /= PRS_REFRESH_WAIT and PRSS /= PRS_REFRESH else '0';	
 	PRG_A <= PRG_RAM_ADDR;
 	PRG_DO <= PRG_RAM_DO;
 	PRG_WRL_N <= not PRG_RAM_WRL;

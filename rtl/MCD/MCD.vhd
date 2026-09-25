@@ -8,6 +8,10 @@ entity MCD is
 		CLK				: in std_logic;
 		RST_N				: in std_logic;
 		ENABLE			: in std_logic;
+		-- Dashboard freeze of the whole Mega CD side (control step 3).
+		-- FROZEN: frozen and no program-RAM SDRAM access in flight.
+		FREEZE			: in std_logic := '0';
+		FROZEN			: out std_logic;
 		MCD_RST_N      : out std_logic;
 		PALSW				: in std_logic;
 
@@ -140,6 +144,8 @@ architecture rtl of MCD is
 	signal ASIC_FD_WR		: std_logic;
 
 	signal GENIE_DATA    : std_logic_vector(15 downto 0);
+	signal SUB_EN        : std_logic;   -- ENABLE, held low during a dashboard freeze
+	signal CDDA_EN       : std_logic;
 	
 	component CODES
 		generic
@@ -211,11 +217,16 @@ begin
 								  ASIC_DO(7 downto 0);
 	S68K_DI(15 downto 8) <= ASIC_DO(15 downto 8);
 	
+	SUB_EN <= ENABLE and not FREEZE;
+	CDDA_EN <= not FREEZE;
+
 	ASIC : entity work.ASIC
 	port map(
 		CLK   			=> CLK,
 		RST_N       	=> RST_N,
 		ENABLE      	=> ENABLE,
+		FREEZE      	=> FREEZE,
+		FROZEN      	=> FROZEN,
 		
 		S68K_A   		=> S68K_A(23 downto 1),
 		S68K_DI   		=> S68K_DO,
@@ -337,7 +348,7 @@ begin
 	port map(
 		CLK   		=> CLK,
 		RESET_N     => ERES_N,
-		ENABLE      => ENABLE,
+		ENABLE      => SUB_EN,
 		
 		CLKEN_P   	=> S68K_CE_R,
 		CLKEN_N		=> S68K_CE_F,
@@ -381,7 +392,7 @@ begin
 	port map(
 		CLK   		=> CLK,
 		RST_N       => ERES_N,
-		ENABLE      => ENABLE,
+		ENABLE      => SUB_EN,
 		PALSW			=> PALSW,
 		
 		CLKEN			=> S68K_CE_F,
@@ -420,7 +431,7 @@ begin
 	port map(
 		CLK   		=> CLK,
 		RST_N       => ERES_N,
-		ENABLE      => '1',
+		ENABLE      => CDDA_EN,      -- was '1': CD audio stops draining its FIFO while frozen
 		
 		PALSW			=> PALSW,
 		

@@ -90,8 +90,18 @@ int main(int argc, char **argv)
 	printf("READY\n");
 	fflush(stdout);
 
+	int main_frozen = 0;
 	while (!stop_flag) {
 		dashboard_ipc_poll();
+		// what megacd.cpp's mcd_poll() checks before touching the CD drive
+		if (g_is_megacd) {
+			int f = dashboard_ipc_frozen();
+			if (f != main_frozen) {
+				main_frozen = f;
+				printf("MAINFROZEN %d\n", f);
+				fflush(stdout);
+			}
+		}
 		for (int i = 0; i < 1500; i++) tick();
 	}
 	delete top;

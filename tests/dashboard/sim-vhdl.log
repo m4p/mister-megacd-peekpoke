@@ -1,0 +1,5 @@
+tb_asic_freeze.vhd:222:17:@955156500ps:(report note): DONE: tb_asic_freeze seed=1 reads=740 writes=760 freezes=28 frozen_cycles=15026
+tb_asic_freeze.vhd:222:17:@948516300ps:(report note): DONE: tb_asic_freeze seed=2 reads=730 writes=770 freezes=25 frozen_cycles=14601
+tb_asic_freeze.vhd:222:17:@865727700ps:(report note): DONE: tb_asic_freeze seed=3 reads=761 writes=739 freezes=23 frozen_cycles=10170
+tb_asic_freeze.vhd:222:17:@1022823300ps:(report note): DONE: tb_asic_freeze seed=4 reads=752 writes=748 freezes=28 frozen_cycles=18607
+tb_asic_freeze.vhd:222:17:@903950700ps:(report note): DONE: tb_asic_freeze seed=5 reads=712 writes=788 freezes=20 frozen_cycles=12224

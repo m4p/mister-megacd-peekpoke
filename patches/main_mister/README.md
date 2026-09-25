@@ -8,6 +8,9 @@
   reports core identity and epoch, and sends `SESSION 0` when the bridge disconnects.
 - `user_io.cpp`: calls `dashboard_ipc_poll()` every poll iteration and
   `dashboard_ipc_core_changed()` whenever the core is re-identified.
+- `support/megacd/megacd.cpp`: the CD barrier. `mcd_poll()` returns early while the dashboard
+  holds the console frozen (`dashboard_ipc_frozen()`), so the CD drive neither advances nor
+  sends sectors or CD audio. The drive counts poll ticks, so CD time simply stops.
 
 It is made against Main_MiSTer **release 20260912** (`47221c18987e101f50caafeb3b615f53b62722ca`),
 so a patched Main differs from the official release only by the dashboard adapter. The Makefile's

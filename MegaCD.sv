@@ -337,6 +337,12 @@ wire [11:0] dash_joy;
 wire        dash_pause_req;     // dashboard pause request (gen.sv PAUSE_EN)
 wire        gen_paused;         // Genesis side frozen (gen.sv PAUSED)
 wire [23:1] gen_prog_a;         // 68K's last instruction-fetch address (gen.sv M68K_PROG_A)
+// The Mega CD side freezes only after the Genesis side reports PAUSED, so no
+// main-CPU access into the Mega CD can be left waiting on a frozen ASIC.
+reg         mcd_freeze = 0;
+wire        mcd_frozen;
+always @(posedge clk_sys) mcd_freeze <= dash_pause_req & gen_paused;
+wire        dash_frozen = gen_paused & mcd_frozen;
 
 wire        dash_sdr_busy;      // dashboard owns / is about to own SDRAM port 2 (look-ahead)
 wire        dash_sdr_own;       // dashboard owns SDRAM port 2 (registered)
@@ -627,6 +633,8 @@ MCD MCD
 	.RST_N(~(reset|rom_download)),
 	.CLK(clk_sys),
 	.ENABLE(1),
+	.FREEZE(mcd_freeze),
+	.FROZEN(mcd_frozen),
 	.MCD_RST_N(MCD_RST_N),
 	.PALSW(PAL),
 
@@ -966,7 +974,7 @@ dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE
 	.mem_block(rom_download),
 
 	.pause_req(dash_pause_req),
-	.frozen(gen_paused),
+	.frozen(dash_frozen),
 	.prog_addr(gen_prog_a)
 );
 

@@ -30,4 +30,4 @@ if git -C "$MAIN" apply --reverse --check "$PATCH" 2>/dev/null; then
 fi
 git -C "$MAIN" apply --check "$PATCH"
 git -C "$MAIN" apply "$PATCH"
-echo "applied: user_io.cpp hooks + support/megacd/dashboard_ipc.{h,cpp} in $MAIN"
+echo "applied: user_io.cpp hooks, megacd.cpp CD barrier, support/megacd/dashboard_ipc.{h,cpp} in $MAIN"

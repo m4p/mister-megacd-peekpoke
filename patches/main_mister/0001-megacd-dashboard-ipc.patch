@@ -1,9 +1,9 @@
 diff --git a/support/megacd/dashboard_ipc.cpp b/support/megacd/dashboard_ipc.cpp
 new file mode 100644
-index 0000000..d1c8a76
+index 0000000..3b219b7
 --- /dev/null
 +++ b/support/megacd/dashboard_ipc.cpp
-@@ -0,0 +1,268 @@
+@@ -0,0 +1,278 @@
 +// MegaCD dashboard IPC adapter: see dashboard_ipc.h.
 +
 +#include <stdio.h>
@@ -210,6 +210,16 @@ index 0000000..d1c8a76
 +	core_epoch++;
 +}
 +
++int dashboard_ipc_frozen()
++{
++	// PROBE with generation 0: no session check, no lease refresh, no side effect.
++	// r[0] is the magic only on a dashboard RBF; r[1] is FLAGS.
++	uint16_t out[1] = { (uint16_t)(DASH_SUB_PROBE << 8) };
++	uint16_t resp[2];
++	xfer(out, 1, 0, resp);
++	return resp[0] == DASH_MAGIC_ACK && (resp[1] & DASH_FLAG_FROZEN);
++}
++
 +void dashboard_ipc_poll()
 +{
 +	if (listen_fd < 0)
@@ -274,10 +284,10 @@ index 0000000..d1c8a76
 +}
 diff --git a/support/megacd/dashboard_ipc.h b/support/megacd/dashboard_ipc.h
 new file mode 100644
-index 0000000..8e78ba3
+index 0000000..c53aca0
 --- /dev/null
 +++ b/support/megacd/dashboard_ipc.h
-@@ -0,0 +1,35 @@
+@@ -0,0 +1,42 @@
 +#ifndef DASHBOARD_IPC_H
 +#define DASHBOARD_IPC_H
 +
@@ -291,7 +301,9 @@ index 0000000..8e78ba3
 +
 +#define UIO_MCD_DASH            0x70
 +#define DASH_MAGIC_ACK          0xDB26
++#define DASH_SUB_PROBE          0x01
 +#define DASH_SUB_SESSION        0x0F
++#define DASH_FLAG_FROZEN        (1 << 4)
 +
 +#define DASH_IPC_XFER           1
 +#define DASH_IPC_INFO           2
@@ -312,7 +324,36 @@ index 0000000..8e78ba3
 +// Called whenever Main (re)identifies the loaded core.
 +void dashboard_ipc_core_changed();
 +
++// 1 while the dashboard holds the console frozen (pause or a memory
++// transaction). mcd_poll() then must not advance the CD drive or send data,
++// so CD time and audio stop with the machine. Cheap: one 2-word SPI packet.
++int dashboard_ipc_frozen();
++
 +#endif
+diff --git a/support/megacd/megacd.cpp b/support/megacd/megacd.cpp
+index d64e2c7..001a7da 100644
+--- a/support/megacd/megacd.cpp
++++ b/support/megacd/megacd.cpp
+@@ -11,6 +11,7 @@
+ #include "../../menu.h"
+ #include "../../cheats.h"
+ #include "megacd.h"
++#include "dashboard_ipc.h"
+ 
+ #define SAVE_IO_INDEX 5 // fake download to trigger save loading
+ 
+@@ -26,6 +27,11 @@ void mcd_poll()
+ 	static uint8_t last_req = 255;
+ 	static uint8_t adj = 0;
+ 
++	// Dashboard freeze: the CD side is frozen, so the drive must not advance
++	// and nothing may be sent (docs/dashboard-control-design.md, step 3).
++	// The drive counts poll ticks, so skipping them stops CD time.
++	if (dashboard_ipc_frozen()) return;
++
+ 	if (!poll_timer || CheckTimer(poll_timer))
+ 	{
+ 		if (!cdd.isData && cdd.status == CD_STAT_PLAY && cdd.latency == 0) {
 diff --git a/user_io.cpp b/user_io.cpp
 index ca94d8b..bee5e6c 100644
 --- a/user_io.cpp
