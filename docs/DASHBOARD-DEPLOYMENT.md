@@ -208,14 +208,19 @@ file's other contents are kept:
 
 ```bash
 F=/media/fat/linux/user-startup.sh
-[ -f $F ] || printf '#!/bin/sh\n' > $F
+[ -f $F ] || cp /media/fat/linux/_user-startup.sh $F
 grep -q '# >>> megacd-dashboard >>>' $F || cat >> $F <<'EOF'
+
 # >>> megacd-dashboard >>>
-[ -x /media/fat/megacd-dashboard/start.sh ] && /media/fat/megacd-dashboard/start.sh start
+[ -x /media/fat/megacd-dashboard/start.sh ] && /media/fat/megacd-dashboard/start.sh "$1"
 # <<< megacd-dashboard <<<
 EOF
 chmod +x $F
 ```
+
+`/etc/init.d/S99user` runs this file with `start` at boot and `stop` at shutdown, and the block
+passes that on, so the bridge also shuts down cleanly (releasing any injected buttons). Test
+both without rebooting: `/etc/init.d/S99user stop` then `/etc/init.d/S99user start`.
 
 The bridge may start before Main or the core. It retries the IPC socket with backoff (100 ms
 up to 1 s) on each request. Main restarts itself on every core load; the bridge notices the
