@@ -216,13 +216,13 @@ If the bridge dies, Main issues `SESSION 0`, which releases input immediately.
 |---|---|---|
 | 0 | `INPUT` | yes |
 | 1 | `WORKRAM_READ` | yes (word-coherent only; §8) |
-| 2 | `WORKRAM_WRITE` | **no**: requires `FREEZE` and the FX68K prefetch hook |
+| 2 | `WORKRAM_WRITE` | **yes** (control step 2): written under freeze, away from the 68K's last instruction fetch (§8) |
 | 3 | `VRAM_READ` | **no**: requires `FREEZE` to arbitrate the VDP port |
 | 4 | `VRAM_WRITE` | **no** |
 | 5 | `FREEZE` (pause/resume) | **yes, Genesis side** (control step 1: 68K, Z80, FM, PSG, bus; the Mega CD side follows in step 3) |
 | 6 | `STATE` (native savestates) | **no** |
 | 7 | `LOOPBACK` | yes |
-| 8 | `READ_COHERENT` | **no**: set only when reads execute under freeze |
+| 8 | `READ_COHERENT` | **yes** (control step 2): work-RAM reads longer than one word run under freeze |
 
 The bridge derives its public `/capabilities` from these bits. It never emulates a missing
 feature.
@@ -241,9 +241,19 @@ Access goes through SDRAM port 2 via `rtl/dashboard_sdram_port.sv`:
   proven pattern as the existing `tmpram` engine.
 - Port 1 (the Genesis CPU) keeps priority inside `sdram.sv`, so the game is not starved.
 
-Without `FREEZE`, a read of several words can observe a CPU update between words. Each
-16-bit word is atomic, but multi-word values are not. `/capabilities` reports this as
-`"read_consistency": "word"`.
+Reads longer than one word and all writes run under a transaction freeze (the `gen.sv` pause,
+see `gen_clken.sv`): no CPU, Z80 or DMA cycle happens between the words, so multi-word values are
+coherent and no bus master ever sees a half-written patch.
+
+**Writes and the 68K's prefetch.** `gen.sv` records the address of the 68K's last program-space
+fetch (`M68K_PROG_A`). A write is only performed while that address is more than `PATCH_WINDOW`
+(16) bytes away from the whole write range. That margin covers the prefetch queue and an
+instruction whose extension words are still unfetched. When the 68K is inside the margin, the
+engine releases the freeze for `STEP_CYCLES` (512, about 10 µs) and tries again. After
+`MAX_STEPS` attempts (about 40 ms) it gives up with `ERR_BUSY`, and nothing is written. During a
+user pause these steps let the CPU run for a few microseconds. Like GPGX's between-frames
+patching, this cannot protect a subroutine that later returns into the middle of a changed
+instruction sequence.
 
 ## 9. Bridge ↔ Main IPC (Unix stream socket)
 

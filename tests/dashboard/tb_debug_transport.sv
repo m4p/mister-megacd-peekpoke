@@ -59,7 +59,7 @@ dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(12)) dut
 	.mem_req(mem_req), .mem_we(mem_we), .mem_be(mem_be), .mem_space(mem_space),
 	.mem_addr(mem_addr), .mem_wdata(mem_wdata), .mem_rdata(mem_rdata),
 	.mem_ack(mem_ack), .mem_err(mem_err), .mem_block(rom_download),
-	.pause_req(), .frozen(1'b0)
+	.pause_req(), .frozen(1'b0), .prog_addr(23'h0)
 );
 
 wire [24:1] sdr_addr;

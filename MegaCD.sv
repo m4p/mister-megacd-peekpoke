@@ -336,6 +336,7 @@ wire        dash_io_claim;
 wire [11:0] dash_joy;
 wire        dash_pause_req;     // dashboard pause request (gen.sv PAUSE_EN)
 wire        gen_paused;         // Genesis side frozen (gen.sv PAUSED)
+wire [23:1] gen_prog_a;         // 68K's last instruction-fetch address (gen.sv M68K_PROG_A)
 
 wire        dash_sdr_busy;      // dashboard owns / is about to own SDRAM port 2 (look-ahead)
 wire        dash_sdr_own;       // dashboard owns SDRAM port 2 (registered)
@@ -571,7 +572,8 @@ gen gen
 	.GG_AVAILABLE(gg_available1),
 
 	.PAUSE_EN(dash_pause_req),
-	.PAUSED(gen_paused)
+	.PAUSED(gen_paused),
+	.M68K_PROG_A(gen_prog_a)
 );
 
 wire TRANSP_DETECT;
@@ -938,7 +940,7 @@ localparam [31:0] DASH_BUILD_ID = {8'h01,
 	DASH_BUILD_DATE[43:40], DASH_BUILD_DATE[35:32], DASH_BUILD_DATE[27:24],
 	DASH_BUILD_DATE[19:16], DASH_BUILD_DATE[11:8],  DASH_BUILD_DATE[3:0]};
 
-dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1)) dashboard_debug
+dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE(1), .FEAT_READ_COHERENT(1)) dashboard_debug
 (
 	.clk(clk_sys),
 	.reset(RESET),
@@ -964,7 +966,8 @@ dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1)) dashboard_debug
 	.mem_block(rom_download),
 
 	.pause_req(dash_pause_req),
-	.frozen(gen_paused)
+	.frozen(gen_paused),
+	.prog_addr(gen_prog_a)
 );
 
 dashboard_sdram_port dashboard_sdram_port

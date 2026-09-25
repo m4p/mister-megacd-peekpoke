@@ -45,12 +45,15 @@ def wram_word(i, seed=1):
     return x & 0xFFFF
 
 
+POKED = {}   # byte address -> value written through /bus-poke into the current core
+
+
 def wram_bytes(addr, length, seed=1):
     out = []
     for a in range(addr, addr + length):
         off = a - 0xFF0000
         w = wram_word(off >> 1, seed)
-        out.append(w >> 8 if off % 2 == 0 else w & 0xFF)
+        out.append(POKED.get(a, w >> 8 if off % 2 == 0 else w & 0xFF))
     return bytes(out).hex()
 
 
@@ -159,11 +162,11 @@ def main():
         print("capabilities")
         st, j = b.get("/capabilities")
         check(st == 200 and j["core"]["present"], f"core present: {j.get('core')}")
-        check(j["core"].get("build_id") == "01260925" and j["core"].get("feature_bits") == 0xA3, "build id / features from RTL PROBE (incl. FREEZE)")
+        check(j["core"].get("build_id") == "01260925" and j["core"].get("feature_bits") == 0x1A7, "build id / features from RTL PROBE (freeze, writes, coherent reads)")
         f = j["features"]
-        check(f["bus_peek"] and f["input"] and f["pause"] and not f["bus_poke"] and not f["state"]
+        check(f["bus_peek"] and f["input"] and f["pause"] and f["bus_poke"] and not f["state"]
               and not f["vram_peek"], f"features {f}")
-        check(j["read_consistency"] == "word", "read consistency is word")
+        check(j["read_consistency"] == "coherent", "read consistency is coherent")
 
         print("reads through RTL + SDRAM model")
         for addr, n in READS:
@@ -171,10 +174,21 @@ def main():
             check(st == 200 and j["data"] == wram_bytes(addr, n), f"bus-peek ${addr:06X}:{n}")
 
         print("refused features are explicit")
-        st, j = b.post("/bus-poke", {"bus": "main68k", "address": 0xFF842C, "data": "4e714e714e714e71", "encoding": "hex", "unsafe": True})
-        check(st == 501 and j["error"]["code"] == "feature_unavailable", "bus-poke 501")
-        st, j = peek(b, 0xFF842C, 8)
-        check(j["data"] == wram_bytes(0xFF842C, 8), "refused poke changed nothing")
+        print("CPU-bus patches through the RTL")
+        written = {}
+        for addr, data in ((0xFF842C, "4e714e714e714e71"), (0xFF7A08, "0001"), (0xFF6FF6, "0000"),
+                           (0xFF7ABD, "".join("%02x" % ((k * 37) & 0xFF) for k in range(64))), (0xFFBB23, "a5")):
+            st, j = b.post("/bus-poke", {"bus": "main68k", "address": addr, "data": data, "encoding": "hex", "unsafe": True})
+            check(st == 200, "bus-poke $%06X (%d bytes): %s" % (addr, len(data) // 2, j))
+            written[addr] = data
+            if st == 200:
+                for k in range(len(data) // 2):
+                    POKED[addr + k] = int(data[2 * k:2 * k + 2], 16)
+        for addr, data in written.items():
+            st, j = peek(b, addr, len(data) // 2)
+            check(st == 200 and j["data"] == data, "readback $%06X" % addr)
+        st, j = peek(b, 0xFFBB22, 1)
+        check(j["data"] == wram_bytes(0xFFBB22, 1), "neighbour of an odd single-byte write unchanged")
         st, j = b.post("/peek", {"domain": "vram", "address": 10560, "length": 32, "encoding": "hex"})
         check(st == 501, "vram peek 501")
         print("pause / resume through the RTL")
@@ -274,6 +288,7 @@ def main():
         sim.stop()
         st, j = peek(b, 0xFF6FEA, 2)
         check(st in (503, 504) and j["error"]["code"] in ("core_unavailable", "operation_timeout"), f"Main gone: {st}")
+        POKED.clear()   # the new core starts from its own RAM
         sim = Sim(args.sim, sock, "--wram-seed", "7")
         time.sleep(0.2)   # let the new Main create its socket (it does so on its first poll)
         st, j = peek(b, 0xFF6FEA, 2)

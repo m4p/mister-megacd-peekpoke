@@ -56,7 +56,7 @@ wire  [7:0] mem_space;
 wire [15:1] mem_addr;
 wire [15:0] mem_wdata, mem_rdata;
 
-dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1)) dashboard_debug
+dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE(1), .FEAT_READ_COHERENT(1)) dashboard_debug
 (
 	.clk(clk), .reset(1'b0),
 	.io_enable(ext_enable), .io_strobe(ext_strobe), .io_din(ext_din),
@@ -65,7 +65,7 @@ dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1)) das
 	.mem_req(mem_req), .mem_we(mem_we), .mem_be(mem_be), .mem_space(mem_space),
 	.mem_addr(mem_addr), .mem_wdata(mem_wdata), .mem_rdata(mem_rdata),
 	.mem_ack(mem_ack), .mem_err(mem_err), .mem_block(rom_download),
-	.pause_req(pause_req), .frozen(frozen)
+	.pause_req(pause_req), .frozen(frozen), .prog_addr(23'h0)
 );
 
 wire [24:1] sdr_addr;
@@ -87,6 +87,8 @@ dashboard_sdram_port dashboard_sdram_port
 
 reg [15:0] wram[0:32767];
 reg        old_rd = 0, old_wr = 0, pending = 0, pend_we = 0;
+reg  [1:0] pend_be;
+reg [15:0] pend_din;
 reg  [2:0] wait_cnt = 0, busy_cnt = 0;
 reg [24:1] pend_addr;
 reg [15:0] lfsr = 16'hACE1;
@@ -102,6 +104,8 @@ always @(posedge clk) begin
 		pending   <= 1;
 		pend_we   <= wr;
 		pend_addr <= sdr_addr;
+		pend_be   <= {sdr_wrh, sdr_wrl};
+		pend_din  <= sdr_din;
 		wait_cnt  <= lfsr[2:0];
 		old_rd    <= rd;
 		old_wr    <= wr;
@@ -116,6 +120,10 @@ always @(posedge clk) begin
 			sdr_busy <= 0;
 			pending  <= 0;
 			if(!pend_we && pend_addr[24:16] == 9'b010000000) sdr_dout <= wram[pend_addr[15:1]];
+			if(pend_we && pend_addr[24:16] == 9'b010000000) begin
+				if(pend_be[1]) wram[pend_addr[15:1]][15:8] <= pend_din[15:8];
+				if(pend_be[0]) wram[pend_addr[15:1]][7:0]  <= pend_din[7:0];
+			end
 		end
 	end
 	else if(lfsr[1:0] == 0) sdr_dout <= lfsr;   // shared dout clobbered by other ports

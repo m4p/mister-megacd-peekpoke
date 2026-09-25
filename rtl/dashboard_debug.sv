@@ -22,6 +22,11 @@ module dashboard_debug #(
 	parameter        FEAT_VRAM_READ     = 0,
 	parameter        FEAT_VRAM_WRITE    = 0,
 	parameter        FEAT_FREEZE        = 0,
+	parameter        FEAT_READ_COHERENT = 0,   // multi-word work-RAM reads under freeze (needs FEAT_FREEZE)
+	parameter        PATCH_WINDOW       = 16,  // bytes around the 68K's last program fetch a write must avoid
+	parameter        STEP_CYCLES        = 512, // CPU run time between attempts when it executes near a write
+	parameter        MAX_STEPS          = 4095,
+	parameter        FREEZE_TIMEOUT     = 2097151,
 	parameter        LEASE_BITS         = 26
 )
 (
@@ -54,8 +59,9 @@ module dashboard_debug #(
 	input             mem_block,   // memory unavailable (ROM download): abort between accesses
 
 	// freeze controller (unused unless FEAT_FREEZE)
-	output reg        pause_req,
-	input             frozen
+	output            pause_req,   // user pause or transaction freeze
+	input             frozen,
+	input      [23:1] prog_addr    // 68K address of its last program-space (instruction) fetch
 );
 
 localparam [15:0] CMD_DASH      = 16'h0070;
@@ -101,7 +107,7 @@ localparam [7:0] SP_VRAM     = 8'h02;
 
 localparam [15:0] FEATURES = {
 	7'd0,
-	1'b0,                      // 8 READ_COHERENT (needs freeze)
+	FEAT_READ_COHERENT ? 1'b1 : 1'b0, // 8
 	1'b1,                      // 7 LOOPBACK
 	1'b0,                      // 6 STATE
 	FEAT_FREEZE     ? 1'b1 : 1'b0, // 5
@@ -206,13 +212,35 @@ reg [15:0] h2, h3, h4, h5;
 reg        xfer_ok;
 reg  [5:0] xfer_left;
 
-wire [15:0] flags = {gen, |inp_target | |joy_inject, owner, fault, frozen, pause_req,
+// Freeze control. user_pause is PAUSE/RESUME; txn_freeze holds the machine
+// for one memory transaction; stepping briefly lets the CPU run on when it is
+// executing near the bytes about to be written.
+reg        user_pause = 0;
+reg        txn_freeze = 0;
+reg        stepping = 0;
+reg [22:0] ftimer;
+reg [11:0] steps;
+assign pause_req = (user_pause | txn_freeze) & ~stepping;
+
+// Does a write to [cur_addr, cur_addr+cur_len) touch code the 68K may already
+// hold (prefetch queue, the instruction in progress)? Work RAM is mirrored
+// across $E00000-$FFFFFF, so compare offsets within the 64 KiB.
+wire        prog_in_wram = &prog_addr[23:21];
+wire [17:0] prog_off     = {2'b00, prog_addr[15:1], 1'b0};
+wire [17:0] win_lo       = {2'b00, cur_addr};
+wire [17:0] win_hi       = {2'b00, cur_addr} + {6'd0, cur_len} + PATCH_WINDOW;
+wire        window_hit   = prog_in_wram && (prog_off + PATCH_WINDOW >= win_lo) && (prog_off < win_hi);
+wire        need_freeze  = (cur_op == OP_WRITE) ||
+                           (cur_op == OP_READ && (cur_space == SP_VRAM || (FEAT_READ_COHERENT && cur_len > 2)));
+
+wire [15:0] flags = {gen, |inp_target | |joy_inject, owner, fault, frozen, user_pause,
                      tstate == T_STAGING, tstate == T_DONE, tstate == T_RUNNING};
 
 // engine
-localparam [2:0] E_IDLE = 3'd0, E_NEXT = 3'd1, E_RMEM = 3'd2, E_STG = 3'd3,
-                 E_WSTG = 3'd4, E_WSTG2 = 3'd5, E_WMEM = 3'd6, E_FIN = 3'd7;
-reg  [2:0] estate = E_IDLE;
+localparam [3:0] E_IDLE = 4'd0, E_NEXT = 4'd1, E_RMEM = 4'd2, E_STG = 4'd3,
+                 E_WSTG = 4'd4, E_WSTG2 = 4'd5, E_WMEM = 4'd6, E_FIN = 4'd7,
+                 E_FRZ = 4'd8, E_STEP = 4'd9;
+reg  [3:0] estate = E_IDLE;
 reg [11:0] eidx;
 reg [15:0] eword;           // cached word (READ)
 reg [15:1] eword_addr;
@@ -270,7 +298,7 @@ always @(posedge clk) begin
 			inp_target <= 0;
 			inp_latch  <= 0;
 			joy_inject <= 0;
-			pause_req  <= 0;
+			user_pause <= 0;
 			if(tstate == T_STAGING) tstate <= T_IDLE;
 		end
 	end
@@ -359,7 +387,42 @@ always @(posedge clk) begin
 				end
 			end
 
+		// wait until the machine is frozen (bus idle, CPUs gated)
+		E_FRZ:
+			if(frozen) begin
+				if(cur_op == OP_WRITE && cur_space == SP_WORKRAM && window_hit) begin
+					stepping <= 1;          // 68K is at/near the target: let it run on
+					ftimer   <= 0;
+					estate   <= E_STEP;
+				end
+				else estate <= E_NEXT;
+			end
+			else if(ftimer == FREEZE_TIMEOUT) begin
+				res_code <= R_BUSY;
+				res_len  <= 0;
+				estate   <= E_FIN;
+			end
+			else ftimer <= ftimer + 1'd1;
+
+		E_STEP:
+			if(ftimer == STEP_CYCLES) begin
+				stepping <= 0;
+				ftimer   <= 0;
+				if(steps == MAX_STEPS) begin
+					res_code <= R_BUSY;         // never left the target area: nothing written
+					res_len  <= 0;
+					estate   <= E_FIN;
+				end
+				else begin
+					steps  <= steps + 1'd1;
+					estate <= E_FRZ;
+				end
+			end
+			else ftimer <= ftimer + 1'd1;
+
 		E_FIN: begin
+				txn_freeze <= 0;
+				stepping   <= 0;
 				estate <= E_IDLE;
 				tstate <= discard ? T_IDLE : T_DONE;
 				discard <= 0;
@@ -417,7 +480,7 @@ always @(posedge clk) begin
 						inp_target <= 0;
 						inp_latch  <= 0;
 						joy_inject <= 0;
-						pause_req  <= 0;
+						user_pause <= 0;
 						if(estate == E_IDLE || estate == E_FIN) begin
 							tstate  <= T_IDLE;   // overrides E_FIN's T_DONE
 							discard <= 0;
@@ -495,7 +558,10 @@ always @(posedge clk) begin
 							emutated    <= 0;
 							res_code    <= R_OK;
 							res_len     <= cur_len;
-							estate      <= (cur_op == OP_LOOPBACK) ? E_FIN : E_NEXT;
+							ftimer      <= 0;
+							steps       <= 0;
+							txn_freeze  <= (cur_op != OP_LOOPBACK) && need_freeze;
+							estate      <= (cur_op == OP_LOOPBACK) ? E_FIN : need_freeze ? E_FRZ : E_NEXT;
 						end
 					end
 
@@ -546,7 +612,7 @@ always @(posedge clk) begin
 					if(wcnt == 2) begin
 						if(!FEAT_FREEZE) io_dout <= R_UNSUPPORTED;
 						else begin
-							pause_req <= (subcmd == SC_PAUSE);
+							user_pause <= (subcmd == SC_PAUSE);
 							io_dout   <= R_OK;
 						end
 					end
@@ -564,7 +630,9 @@ always @(posedge clk) begin
 		inp_target <= 0;
 		inp_latch  <= 0;
 		joy_inject <= 0;
-		pause_req  <= 0;
+		user_pause <= 0;
+		txn_freeze <= 0;
+		stepping   <= 0;
 		mem_req    <= 0;
 		discard    <= 0;
 		fault      <= 0;

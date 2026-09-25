@@ -6,13 +6,17 @@ RTL = ../../rtl
 
 SEEDS ?= 1 2 3 4 5
 
-sim: tb_debug_transport.vvp tb_gen_clken.vvp
+sim: tb_debug_transport.vvp tb_gen_clken.vvp tb_debug_write.vvp
 	@rm -f sim.log
 	@for s in $(SEEDS); do vvp -n tb_debug_transport.vvp +seed=$$s | tee -a sim.log | grep -E '^(PASS|FAIL)'; done
 	@for s in $(SEEDS); do vvp -n tb_gen_clken.vvp +seed=$$s | tee -a sim.log | grep -E '^(PASS|FAIL)'; done
+	@for s in $(SEEDS); do vvp -n tb_debug_write.vvp +seed=$$s | tee -a sim.log | grep -E '^(PASS|FAIL)'; done
 	@! grep -qE '^FAIL' sim.log
 
 tb_debug_transport.vvp: tb_debug_transport.sv $(RTL)/dashboard_debug.sv $(RTL)/dashboard_sdram_port.sv $(RTL)/hps_ext.v
+	iverilog -g2012 -Wall -o $@ $^
+
+tb_debug_write.vvp: tb_debug_write.sv $(RTL)/dashboard_debug.sv $(RTL)/dashboard_sdram_port.sv $(RTL)/hps_ext.v
 	iverilog -g2012 -Wall -o $@ $^
 
 tb_gen_clken.vvp: tb_gen_clken.sv $(RTL)/GEN/gen_clken.sv

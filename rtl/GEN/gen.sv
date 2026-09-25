@@ -140,7 +140,8 @@ module gen
 
 	// Dashboard pause (docs/dashboard-control-design.md, step 1). Tie PAUSE_EN low when unused.
 	input         PAUSE_EN,
-	output        PAUSED
+	output        PAUSED,
+	output reg [23:1] M68K_PROG_A   // address of the 68K's last program-space (instruction) fetch
 );
 
 reg reset;
@@ -216,6 +217,9 @@ always @(posedge MCLK) begin
 end
 
 wire M68K_INTACK = &M68K_FC;
+
+// Dashboard writes use this to avoid patching code the 68K already holds.
+always @(posedge MCLK) if (!M68K_AS_N && M68K_FC[1:0] == 2'b10) M68K_PROG_A <= M68K_A;
 
 assign M68K_BR_N = VBUS_BR_N & Z80_BR_N;
 assign M68K_BGACK_N = VBUS_BGACK_N & Z80_BGACK_N;

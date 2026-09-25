@@ -52,6 +52,13 @@ prefetch queue (IRC/IR). Plan:
    invalidate the queue, or resume through a path that refetches. A focused testbench patches an
    instruction that is already in the prefetch queue and checks which version runs.
 
+**Implemented (step 2):** no FX68K change was needed. `gen.sv` exposes the address of the 68K's
+last instruction fetch (`M68K_PROG_A`, from the function codes). `dashboard_debug` freezes the
+machine, checks that this address is more than 16 bytes from the write range, and if not, lets the
+CPU run about 10 µs and checks again. The write itself happens while frozen. Code the 68K has not
+fetched yet is read fresh after resume, so neither a stale prefetch nor a half-old, half-new
+instruction can occur. See `docs/dashboard-protocol.md` §8 and `tests/dashboard/tb_debug_write.sv`.
+
 **Shortcut to measure first:** the dashboard's patches only touch 68K work RAM. If the Z80 and DMA
 never write there while driving, the 68K alone needs to be at a boundary; the whole-machine freeze
 then only matters for the user's pause.
