@@ -1,3 +1,4 @@
 *.vvp
 sim.log
 __pycache__/
+sim-vhdl.log
