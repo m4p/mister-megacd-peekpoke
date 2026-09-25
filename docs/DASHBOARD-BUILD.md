@@ -149,10 +149,10 @@ is needed. (`MiSTer.vcxproj` is not updated; it is only used for Visual Studio b
 **Build host:**
 
 ```bash
-make -C MegaCD_MiSTer/linux/dashboard-bridge clean
+make -C MegaCD_MiSTer/linux/dashboard-bridge CROSS_COMPILE=arm-none-linux-gnueabihf- clean
 make -C MegaCD_MiSTer/linux/dashboard-bridge CROSS_COMPILE=arm-none-linux-gnueabihf-
-file MegaCD_MiSTer/linux/dashboard-bridge/build/megacd-dashboard   # ... ARM, statically linked
-sha256sum MegaCD_MiSTer/linux/dashboard-bridge/build/megacd-dashboard
+file MegaCD_MiSTer/linux/dashboard-bridge/build-arm/megacd-dashboard   # ... ARM, statically linked
+sha256sum MegaCD_MiSTer/linux/dashboard-bridge/build-arm/megacd-dashboard
 ```
 
 The cross build links statically, so it does not depend on the MiSTer image's libc version.
