@@ -9,6 +9,7 @@ set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) fourway
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) multitap.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) gen.sv ]
 set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) gen_clken.sv ]
+set_global_assignment -name SYSTEMVERILOG_FILE [file join $::quartus(qip_path) gen_vram_dash.sv ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) genesis_lpf.v ]
 set_global_assignment -name VERILOG_FILE [file join $::quartus(qip_path) audio_iir_filter.v ]
 set_global_assignment -name VHDL_FILE [file join $::quartus(qip_path) CART.vhd ]

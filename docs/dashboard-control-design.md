@@ -96,6 +96,15 @@ swap, 1056-byte uploads, the refresh token). The missing part is a port into the
 the machine is frozen and the VDP is not in a VRAM access (`vram_req == vram_ack`). Word ordering:
 byte address bit 1 selects `vram_*1` or `vram_*2`, and bits 15:2 give the row.
 
+**Implemented (step 4):** `rtl/GEN/gen_vram_dash.sv` now owns port A of the four VRAM RAMs and
+the `vram_ack` register. Without dashboard traffic it is cycle-identical to the old `gen.sv` logic
+(`tb_gen_vram_dash` compares it against the original). A dashboard access takes the port for one
+cycle, and only while the VDP has nothing pending. It masks the VDP's write enables and holds its
+acknowledge, so a VDP request arriving meanwhile completes one or two cycles later and is otherwise
+unchanged. Port B (display) is untouched, so written tiles show up on the next line. The access
+bypasses the VDP's sprite-attribute cache, so it is for pattern data only. `MegaCD.sv` routes the
+endpoint's memory port by space: work RAM to SDRAM port 2, VRAM to `gen.sv`.
+
 ## 5. Order of work
 
 | Step | Deliverable | Verified by |

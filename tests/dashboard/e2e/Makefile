@@ -10,9 +10,9 @@ BRIDGE     = ../../../linux/dashboard-bridge
 VFLAGS = --cc --exe --build -j 0 -O2 --top-module sim_top \
 	-Wno-fatal -Wno-WIDTH -Wno-PINMISSING -Wno-UNOPTFLAT -Wno-MULTIDRIVEN -Wno-IMPLICITSTATIC \
 	-CFLAGS "-O2 -DDASH_IPC_HOST_TEST -I../src -I../src/main_src"
-SRCS = src/sim_top.sv src/rtl/dashboard_debug.sv src/rtl/dashboard_sdram_port.sv src/rtl/hps_ext.v \
+SRCS = src/sim_top.sv src/rtl/GEN/gen_vram_dash.sv src/rtl/dashboard_debug.sv src/rtl/dashboard_sdram_port.sv src/rtl/hps_ext.v \
 	src/main_sim.cpp src/main_src/dashboard_ipc.cpp
-DEPS = sim_top.sv main_sim.cpp dashboard_ipc_host.h ../../../rtl/dashboard_debug.sv \
+DEPS = sim_top.sv main_sim.cpp dashboard_ipc_host.h ../../../rtl/GEN/gen_vram_dash.sv ../../../rtl/dashboard_debug.sv \
 	../../../rtl/dashboard_sdram_port.sv ../../../rtl/hps_ext.v $(MAIN_DIR)/support/megacd/dashboard_ipc.cpp
 
 .PHONY: e2e build clean links

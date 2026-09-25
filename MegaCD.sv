@@ -343,6 +343,14 @@ reg         mcd_freeze = 0;
 wire        mcd_frozen;
 always @(posedge clk_sys) mcd_freeze <= dash_pause_req & gen_paused;
 wire        dash_frozen = gen_paused & mcd_frozen;
+// Dashboard memory port: work RAM via SDRAM port 2, VRAM via gen.sv (control step 4)
+wire        dash_mem_req, dash_mem_we, dash_mem_ack, dash_mem_err;
+wire  [1:0] dash_mem_be;
+wire  [7:0] dash_mem_space;
+wire [15:1] dash_mem_addr;
+wire [15:0] dash_mem_wdata, dash_mem_rdata;
+wire        dash_vram_req, dash_vram_ack;
+wire [15:0] dash_vram_q;
 
 wire        dash_sdr_busy;      // dashboard owns / is about to own SDRAM port 2 (look-ahead)
 wire        dash_sdr_own;       // dashboard owns SDRAM port 2 (registered)
@@ -579,7 +587,15 @@ gen gen
 
 	.PAUSE_EN(dash_pause_req),
 	.PAUSED(gen_paused),
-	.M68K_PROG_A(gen_prog_a)
+	.M68K_PROG_A(gen_prog_a),
+
+	.DASH_VRAM_REQ(dash_vram_req),
+	.DASH_VRAM_WE(dash_mem_we),
+	.DASH_VRAM_BE(dash_mem_be),
+	.DASH_VRAM_A(dash_mem_addr),
+	.DASH_VRAM_D(dash_mem_wdata),
+	.DASH_VRAM_Q(dash_vram_q),
+	.DASH_VRAM_ACK(dash_vram_ack)
 );
 
 wire TRANSP_DETECT;
@@ -936,11 +952,14 @@ end
 
 // Dashboard endpoint instances (declarations above hps_ext)
 `ifdef MEGACD_DASHBOARD
-wire        dash_mem_req, dash_mem_we, dash_mem_ack, dash_mem_err;
-wire  [1:0] dash_mem_be;
-wire  [7:0] dash_mem_space;
-wire [15:1] dash_mem_addr;
-wire [15:0] dash_mem_wdata, dash_mem_rdata;
+// space 1 = work RAM (SDRAM port 2), space 2 = VRAM (gen.sv); dashboard_debug
+// only issues space-2 requests while the machine is frozen.
+wire        dash_sdr_ack, dash_sdr_err;
+wire [15:0] dash_sdr_rdata;
+assign dash_vram_req  = dash_mem_req & (dash_mem_space == 8'h02);
+assign dash_mem_ack   = dash_sdr_ack | dash_vram_ack;
+assign dash_mem_err   = dash_sdr_err;
+assign dash_mem_rdata = (dash_mem_space == 8'h02) ? dash_vram_q : dash_sdr_rdata;
 
 // BUILD_DATE is ASCII "yymmdd"; report it as BCD 0x01yymmdd (0x01 = dashboard RTL revision).
 localparam [47:0] DASH_BUILD_DATE = `BUILD_DATE;
@@ -948,7 +967,8 @@ localparam [31:0] DASH_BUILD_ID = {8'h01,
 	DASH_BUILD_DATE[43:40], DASH_BUILD_DATE[35:32], DASH_BUILD_DATE[27:24],
 	DASH_BUILD_DATE[19:16], DASH_BUILD_DATE[11:8],  DASH_BUILD_DATE[3:0]};
 
-dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE(1), .FEAT_READ_COHERENT(1)) dashboard_debug
+dashboard_debug #(.BUILD_ID(DASH_BUILD_ID), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE(1), .FEAT_READ_COHERENT(1),
+                  .FEAT_VRAM_READ(1), .FEAT_VRAM_WRITE(1)) dashboard_debug
 (
 	.clk(clk_sys),
 	.reset(RESET),
@@ -983,15 +1003,15 @@ dashboard_sdram_port dashboard_sdram_port
 	.clk(clk_sys),
 	.reset(RESET),
 
-	.req(dash_mem_req),
+	.req(dash_mem_req & (dash_mem_space == 8'h01)),
 	.we(dash_mem_we),
 	.be(dash_mem_be),
 	.space(dash_mem_space),
 	.addr(dash_mem_addr),
 	.wdata(dash_mem_wdata),
-	.rdata(dash_mem_rdata),
-	.ack(dash_mem_ack),
-	.err(dash_mem_err),
+	.rdata(dash_sdr_rdata),
+	.ack(dash_sdr_ack),
+	.err(dash_sdr_err),
 
 	.port_free(~rom_download & ~(tmpram_tx_start & ~tmpram_tx_finish) & ~tmpram_req & ~sdr_busy2),
 	.abort(rom_download),
@@ -1011,6 +1031,8 @@ assign dash_io_dout  = 0;
 assign dash_io_claim = 0;
 assign dash_joy      = 0;
 assign dash_pause_req = 0;
+assign dash_vram_req  = 0;
+assign {dash_mem_req, dash_mem_we, dash_mem_be, dash_mem_space, dash_mem_addr, dash_mem_wdata} = 0;
 assign dash_sdr_busy = 0;
 assign dash_sdr_own  = 0;
 assign dash_sdr_addr = 0;

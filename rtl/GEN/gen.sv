@@ -141,7 +141,16 @@ module gen
 	// Dashboard pause (docs/dashboard-control-design.md, step 1). Tie PAUSE_EN low when unused.
 	input         PAUSE_EN,
 	output        PAUSED,
-	output reg [23:1] M68K_PROG_A   // address of the 68K's last program-space (instruction) fetch
+	output reg [23:1] M68K_PROG_A,  // address of the 68K's last program-space (instruction) fetch
+
+	// Dashboard VRAM access (control step 4, see gen_vram_dash.sv). Tie DASH_VRAM_REQ low when unused.
+	input         DASH_VRAM_REQ,
+	input         DASH_VRAM_WE,
+	input   [1:0] DASH_VRAM_BE,
+	input  [15:1] DASH_VRAM_A,
+	input  [15:0] DASH_VRAM_D,
+	output [15:0] DASH_VRAM_Q,
+	output        DASH_VRAM_ACK
 );
 
 reg reset;
@@ -298,6 +307,10 @@ wire [15:1] vram_a;
 wire [15:0] vram_d;
 wire [15:0] vram_q1, vram_q2;
 
+wire [13:0] vram_pa_addr;
+wire [15:0] vram_pa_d;
+wire        vram_wl1, vram_wu1, vram_wl2, vram_wu2;
+
 wire        vram32_req;
 wire [15:1] vram32_a;
 wire [31:0] vram32_q;
@@ -305,9 +318,9 @@ wire [31:0] vram32_q;
 dpram #(14) vram_l1
 (
 	.clock(MCLK),
-	.address_a(vram_a[15:2]),
-	.data_a(vram_d[7:0]),
-	.wren_a(vram_we_l & (vram_ack ^ vram_req) & ~vram_a[1]),
+	.address_a(vram_pa_addr),
+	.data_a(vram_pa_d[7:0]),
+	.wren_a(vram_wl1),
 	.q_a(vram_q1[7:0]),
 
 	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
@@ -318,9 +331,9 @@ dpram #(14) vram_l1
 dpram #(14) vram_u1
 (
 	.clock(MCLK),
-	.address_a(vram_a[15:2]),
-	.data_a(vram_d[15:8]),
-	.wren_a(vram_we_u & (vram_ack ^ vram_req) & ~vram_a[1]),
+	.address_a(vram_pa_addr),
+	.data_a(vram_pa_d[15:8]),
+	.wren_a(vram_wu1),
 	.q_a(vram_q1[15:8]),
 
 	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
@@ -331,9 +344,9 @@ dpram #(14) vram_u1
 dpram #(14) vram_l2
 (
 	.clock(MCLK),
-	.address_a(vram_a[15:2]),
-	.data_a(vram_d[7:0]),
-	.wren_a(vram_we_l & (vram_ack ^ vram_req) & vram_a[1]),
+	.address_a(vram_pa_addr),
+	.data_a(vram_pa_d[7:0]),
+	.wren_a(vram_wl2),
 	.q_a(vram_q2[7:0]),
 
 	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
@@ -344,9 +357,9 @@ dpram #(14) vram_l2
 dpram #(14) vram_u2
 (
 	.clock(MCLK),
-	.address_a(vram_a[15:2]),
-	.data_a(vram_d[15:8]),
-	.wren_a(vram_we_u & (vram_ack ^ vram_req) & vram_a[1]),
+	.address_a(vram_pa_addr),
+	.data_a(vram_pa_d[15:8]),
+	.wren_a(vram_wu2),
 	.q_a(vram_q2[15:8]),
 
 	.address_b(LOADING ? ram_rst_a[14:1] : vram32_a[15:2]),
@@ -354,8 +367,34 @@ dpram #(14) vram_u2
 	.q_b(vram32_q[31:24])
 );
 
-reg vram_ack;
-always @(posedge MCLK) vram_ack <= vram_req;
+// Port A: the VDP's accesses, plus dashboard accesses slotted in while the VDP
+// has nothing pending (gen_vram_dash.sv; identical to the old logic otherwise).
+wire vram_ack;
+gen_vram_dash gen_vram_dash
+(
+	.clk(MCLK),
+	.vram_a(vram_a),
+	.vram_d(vram_d),
+	.vram_we_u(vram_we_u),
+	.vram_we_l(vram_we_l),
+	.vram_req(vram_req),
+	.vram_ack(vram_ack),
+	.ram_addr(vram_pa_addr),
+	.ram_d(vram_pa_d),
+	.wren_l1(vram_wl1),
+	.wren_u1(vram_wu1),
+	.wren_l2(vram_wl2),
+	.wren_u2(vram_wu2),
+	.ram_q1(vram_q1),
+	.ram_q2(vram_q2),
+	.dash_req(DASH_VRAM_REQ),
+	.dash_we(DASH_VRAM_WE),
+	.dash_be(DASH_VRAM_BE),
+	.dash_a(DASH_VRAM_A),
+	.dash_d(DASH_VRAM_D),
+	.dash_q(DASH_VRAM_Q),
+	.dash_ack(DASH_VRAM_ACK)
+);
 
 reg vram32_ack;
 always @(posedge MCLK) vram32_ack <= vram32_req;

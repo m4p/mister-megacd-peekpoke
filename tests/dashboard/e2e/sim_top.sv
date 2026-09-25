@@ -15,7 +15,10 @@ module sim_top #(parameter STOCK = 0)
 	// work RAM backdoor for the harness
 	input             bd_we,
 	input      [14:0] bd_addr,
-	input      [15:0] bd_data
+	input      [15:0] bd_data,
+	input             bd_vram_we,
+	input      [15:0] bd_vram_addr,
+	input       [7:0] bd_vram_data
 );
 
 wire [35:0] EXT_BUS;
@@ -56,7 +59,44 @@ wire  [7:0] mem_space;
 wire [15:1] mem_addr;
 wire [15:0] mem_wdata, mem_rdata;
 
-dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE(1), .FEAT_READ_COHERENT(1)) dashboard_debug
+// memory routing as in MegaCD.sv: space 1 -> SDRAM port 2, space 2 -> VRAM
+wire        sdr_ack, vram_dash_ack;
+wire [15:0] sdr_rdata, vram_dash_q;
+assign mem_rdata = (mem_space == 8'h02) ? vram_dash_q : sdr_rdata;
+
+// VRAM: gen_vram_dash in front of four byte RAMs; the VDP port is idle here
+wire [13:0] vr_addr;
+wire [15:0] vr_d;
+wire        vr_wl1, vr_wu1, vr_wl2, vr_wu2;
+reg   [7:0] vr_ql1, vr_qu1, vr_ql2, vr_qu2;
+reg   [7:0] vram_l1[0:16383], vram_u1[0:16383], vram_l2[0:16383], vram_u2[0:16383];
+always @(posedge clk) begin
+	if (vr_wl1) vram_l1[vr_addr] <= vr_d[7:0];
+	if (vr_wu1) vram_u1[vr_addr] <= vr_d[15:8];
+	if (vr_wl2) vram_l2[vr_addr] <= vr_d[7:0];
+	if (vr_wu2) vram_u2[vr_addr] <= vr_d[15:8];
+	vr_ql1 <= vram_l1[vr_addr]; vr_qu1 <= vram_u1[vr_addr];
+	vr_ql2 <= vram_l2[vr_addr]; vr_qu2 <= vram_u2[vr_addr];
+	if (bd_vram_we) begin   // harness backdoor: canonical byte address
+		case (bd_vram_addr[1:0])
+			2'd0: vram_u1[bd_vram_addr[15:2]] <= bd_vram_data;
+			2'd1: vram_l1[bd_vram_addr[15:2]] <= bd_vram_data;
+			2'd2: vram_u2[bd_vram_addr[15:2]] <= bd_vram_data;
+			2'd3: vram_l2[bd_vram_addr[15:2]] <= bd_vram_data;
+		endcase
+	end
+end
+gen_vram_dash gen_vram_dash
+(
+	.clk(clk), .vram_a(15'd0), .vram_d(16'd0), .vram_we_u(1'b0), .vram_we_l(1'b0), .vram_req(1'b0), .vram_ack(),
+	.ram_addr(vr_addr), .ram_d(vr_d), .wren_l1(vr_wl1), .wren_u1(vr_wu1), .wren_l2(vr_wl2), .wren_u2(vr_wu2),
+	.ram_q1({vr_qu1, vr_ql1}), .ram_q2({vr_qu2, vr_ql2}),
+	.dash_req(mem_req & (mem_space == 8'h02)), .dash_we(mem_we), .dash_be(mem_be), .dash_a(mem_addr),
+	.dash_d(mem_wdata), .dash_q(vram_dash_q), .dash_ack(vram_dash_ack)
+);
+
+dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1), .FEAT_WORKRAM_WRITE(1), .FEAT_READ_COHERENT(1),
+                  .FEAT_VRAM_READ(1), .FEAT_VRAM_WRITE(1)) dashboard_debug
 (
 	.clk(clk), .reset(1'b0),
 	.io_enable(ext_enable), .io_strobe(ext_strobe), .io_din(ext_din),
@@ -64,7 +104,7 @@ dashboard_debug #(.BUILD_ID(32'h01260925), .LEASE_BITS(24), .FEAT_FREEZE(1), .FE
 	.vblank(vblank), .joy_inject(joy),
 	.mem_req(mem_req), .mem_we(mem_we), .mem_be(mem_be), .mem_space(mem_space),
 	.mem_addr(mem_addr), .mem_wdata(mem_wdata), .mem_rdata(mem_rdata),
-	.mem_ack(mem_ack), .mem_err(mem_err), .mem_block(rom_download),
+	.mem_ack(sdr_ack | vram_dash_ack), .mem_err(mem_err), .mem_block(rom_download),
 	.pause_req(pause_req), .frozen(frozen), .prog_addr(23'h0)
 );
 
@@ -78,8 +118,8 @@ wire        port_busy;
 dashboard_sdram_port dashboard_sdram_port
 (
 	.clk(clk), .reset(1'b0),
-	.req(mem_req), .we(mem_we), .be(mem_be), .space(mem_space), .addr(mem_addr),
-	.wdata(mem_wdata), .rdata(mem_rdata), .ack(mem_ack), .err(mem_err),
+	.req(mem_req & (mem_space == 8'h01)), .we(mem_we), .be(mem_be), .space(mem_space), .addr(mem_addr),
+	.wdata(mem_wdata), .rdata(sdr_rdata), .ack(sdr_ack), .err(mem_err),
 	.port_free(~rom_download), .abort(rom_download), .busy(port_busy), .owns(),
 	.sdr_addr(sdr_addr), .sdr_din(sdr_din), .sdr_rd(sdr_rd), .sdr_wrl(sdr_wrl), .sdr_wrh(sdr_wrh),
 	.sdr_busy(sdr_busy), .sdr_dout(sdr_dout)

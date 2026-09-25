@@ -217,8 +217,8 @@ If the bridge dies, Main issues `SESSION 0`, which releases input immediately.
 | 0 | `INPUT` | yes |
 | 1 | `WORKRAM_READ` | yes (word-coherent only; §8) |
 | 2 | `WORKRAM_WRITE` | **yes** (control step 2): written under freeze, away from the 68K's last instruction fetch (§8) |
-| 3 | `VRAM_READ` | **no**: requires `FREEZE` to arbitrate the VDP port |
-| 4 | `VRAM_WRITE` | **no** |
+| 3 | `VRAM_READ` | **yes** (control step 4): VDP port A shared via `rtl/GEN/gen_vram_dash.sv`, under freeze |
+| 4 | `VRAM_WRITE` | **yes** (control step 4); enables the bridge's VRAM refresh token |
 | 5 | `FREEZE` (pause/resume) | **yes, whole machine**: Genesis side (step 1), then the Mega CD side and Main's CD drive (step 3) |
 | 6 | `STATE` (native savestates) | **no** |
 | 7 | `LOOPBACK` | yes |

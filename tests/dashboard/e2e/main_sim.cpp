@@ -87,6 +87,12 @@ int main(int argc, char **argv)
 		tick();
 	}
 	top->bd_we = 0;
+	// VRAM: canonical byte B holds (B * 7 + 3) ^ (B >> 8)
+	for (uint32_t b = 0; b < 65536; b++) {
+		top->bd_vram_we = 1; top->bd_vram_addr = b; top->bd_vram_data = (uint8_t)((b * 7 + 3) ^ (b >> 8));
+		tick();
+	}
+	top->bd_vram_we = 0;
 	printf("READY\n");
 	fflush(stdout);
 

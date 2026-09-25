@@ -165,10 +165,10 @@ def main():
         print("capabilities")
         st, j = b.get("/capabilities")
         check(st == 200 and j["core"]["present"], f"core present: {j.get('core')}")
-        check(j["core"].get("build_id") == "01260925" and j["core"].get("feature_bits") == 0x1A7, "build id / features from RTL PROBE (freeze, writes, coherent reads)")
+        check(j["core"].get("build_id") == "01260925" and j["core"].get("feature_bits") == 0x1BF, "build id / features from RTL PROBE (freeze, writes, coherent reads, VRAM)")
         f = j["features"]
         check(f["bus_peek"] and f["input"] and f["pause"] and f["bus_poke"] and not f["state"]
-              and not f["vram_peek"], f"features {f}")
+              and f["vram_peek"] and f["vram_poke"] and f["vram_refresh_token"], f"features {f}")
         check(j["read_consistency"] == "coherent", "read consistency is coherent")
 
         print("reads through RTL + SDRAM model")
@@ -192,8 +192,33 @@ def main():
             check(st == 200 and j["data"] == data, "readback $%06X" % addr)
         st, j = peek(b, 0xFFBB22, 1)
         check(j["data"] == wram_bytes(0xFFBB22, 1), "neighbour of an odd single-byte write unchanged")
+        print("VRAM through the RTL (GPGX word-swapped API view)")
+        def canon(bb):
+            return ((bb * 7 + 3) ^ (bb >> 8)) & 0xFF
+        def api_bytes(a, n):
+            return bytes(canon(x ^ 1) for x in range(a, a + n)).hex()
         st, j = b.post("/peek", {"domain": "vram", "address": 10560, "length": 32, "encoding": "hex"})
-        check(st == 501, "vram peek 501")
+        check(st == 200 and j["data"] == api_bytes(10560, 32), "signature tile read, API byte A = VDP byte A^1")
+        st, j = b.post("/peek", {"domain": "vram", "address": 10561, "length": 3, "encoding": "hex"})
+        check(st == 200 and j["data"] == api_bytes(10561, 3), "odd-address VRAM read")
+        fix = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "api-fixtures.json")))
+        fresh = [p for p in fix["patches"] if p.get("vram")][0]
+        for state in fresh["states"]:
+            st, j = b.post("/poke", {"domain": "vram", "address": 9952, "data": state["data"], "encoding": "hex"})
+            check(st == 200, "air freshener '%s' upload (1056 bytes): %s" % (state["key"], j))
+            st, j = b.post("/peek", {"domain": "vram", "address": 9952, "length": 1056, "encoding": "hex"})
+            check(st == 200 and j["data"] == state["data"], "air freshener '%s' reads back" % state["key"])
+            st, j = b.post("/peek", {"domain": "vram", "address": 9952 + 608, "length": 32, "encoding": "hex"})
+            check(j.get("data") == state["sig"], "badge signature matches '%s'" % state["key"])
+            for ep in ("/state/save", "/state/load"):
+                st, j = b.post(ep, {"path": "dashboard-cache-refresh.gp0"})
+                check(st == 200, "refresh token %s" % ep)
+        st, j = b.post("/state/load", {"path": "dashboard-cache-refresh.gp0"})
+        check(st == 409, "refresh token is single use")
+        st, j = b.post("/peek", {"domain": "vram", "address": 9950, "length": 2, "encoding": "hex"})
+        check(j.get("data") == api_bytes(9950, 2), "byte before the upload unchanged")
+        st, j = b.post("/peek", {"domain": "vram", "address": 9952 + 1056, "length": 2, "encoding": "hex"})
+        check(j.get("data") == api_bytes(9952 + 1056, 2), "byte after the upload unchanged")
         print("pause / resume through the RTL")
         st, j = b.post("/pause")
         check(st == 200 and j.get("paused") is True, "pause reports paused once frozen: %s" % j)
@@ -268,7 +293,8 @@ def main():
         conf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "conformance.py")
         r = subprocess.run([sys.executable, conf, "--base", f"http://127.0.0.1:{b.port}", "--allow-unsupported"],
                            capture_output=True, text=True, timeout=120)
-        check(r.returncode == 0 and "FAIL " not in r.stdout, "conformance.py read-only items pass (VRAM reported UNSUPPORTED)")
+        check(r.returncode == 0 and "FAIL " not in r.stdout and "UNSUPPORTED" not in r.stdout,
+              "conformance.py read-only items all PASS, VRAM included")
         if r.returncode:
             print(r.stdout)
 
