@@ -5,7 +5,7 @@ This guide covers the three artifacts that must be deployed **together**:
 | Artifact | Source | Built on |
 |---|---|---|
 | `MegaCD_Dashboard.rbf` | this repository, revision `MegaCD_Dashboard` | Linux/Windows x86-64 with Quartus 17.0.2 |
-| `MiSTer` (Main) | `Main_MiSTer` + `support/megacd/dashboard_ipc.*` + `user_io.cpp` hooks | x86-64 with `arm-none-linux-gnueabihf` GCC 10.2 |
+| `MiSTer` (Main) | `Main_MiSTer` @ `aa271e41` + `patches/main_mister/` | x86-64 with `arm-none-linux-gnueabihf` GCC 10.2 |
 | `megacd-dashboard` (bridge) | `linux/dashboard-bridge/` | same ARM toolchain (static binary) |
 
 All three share protocol version 1 ([dashboard-protocol.md](dashboard-protocol.md)). The bridge
@@ -121,6 +121,14 @@ GCC 5.
 
 ```bash
 MegaCD_MiSTer/scripts/setup_arm_toolchain.sh --profile && source ~/.bashrc
+```
+
+The Main changes ship in this repository as
+[`patches/main_mister/`](../patches/main_mister/README.md). Apply them to a checkout of
+the pinned commit (`--clone` creates one):
+
+```bash
+MegaCD_MiSTer/patches/main_mister/apply.sh --clone Main_MiSTer
 ```
 
 ```bash

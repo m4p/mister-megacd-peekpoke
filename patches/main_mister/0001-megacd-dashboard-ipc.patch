@@ -1,0 +1,343 @@
+diff --git a/support/megacd/dashboard_ipc.cpp b/support/megacd/dashboard_ipc.cpp
+new file mode 100644
+index 0000000..d1c8a76
+--- /dev/null
++++ b/support/megacd/dashboard_ipc.cpp
+@@ -0,0 +1,268 @@
++// MegaCD dashboard IPC adapter: see dashboard_ipc.h.
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/un.h>
++
++#ifdef DASH_IPC_HOST_TEST
++#include "dashboard_ipc_host.h"   // simulation harness: SPI routed to a Verilated core
++#else
++#include "../../spi.h"
++#include "../../user_io.h"
++#endif
++
++#include "dashboard_ipc.h"
++
++#ifndef MSG_NOSIGNAL
++#define MSG_NOSIGNAL 0
++#endif
++
++#define IN_BUF_SIZE  (16 * 1024)
++#define OUT_BUF_SIZE (64 * 1024)
++#define OUT_HIGH_WATER (OUT_BUF_SIZE - 512)
++
++static int listen_fd = -1;
++static int client_fd = -1;
++static int init_failed = 0;
++static uint32_t core_epoch = 1;
++
++static uint8_t in_buf[IN_BUF_SIZE];
++static int in_len = 0;
++static uint8_t out_buf[OUT_BUF_SIZE];
++static int out_len = 0;
++
++static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
++static void wr16(uint8_t *p, uint16_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); }
++
++static const char *socket_path()
++{
++	const char *p = getenv("MEGACD_DASH_SOCK");
++	return (p && *p) ? p : DASH_DEFAULT_SOCKET;
++}
++
++static void set_nonblock(int fd)
++{
++	int fl = fcntl(fd, F_GETFL, 0);
++	if (fl >= 0) fcntl(fd, F_SETFL, fl | O_NONBLOCK);
++	fcntl(fd, F_SETFD, FD_CLOEXEC);
++}
++
++static int ipc_listen()
++{
++	const char *path = socket_path();
++	struct sockaddr_un addr;
++	if (strlen(path) >= sizeof(addr.sun_path)) return -1;
++
++	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
++	if (fd < 0) return -1;
++
++	memset(&addr, 0, sizeof(addr));
++	addr.sun_family = AF_UNIX;
++	strcpy(addr.sun_path, path);
++
++	unlink(path); // stale socket from a previous Main instance
++	mode_t old = umask(0077);
++	int res = bind(fd, (struct sockaddr *)&addr, sizeof(addr));
++	umask(old);
++	if (res < 0 || listen(fd, 1) < 0)
++	{
++		close(fd);
++		return -1;
++	}
++	chmod(path, 0600);
++	set_nonblock(fd);
++	printf("MCD dashboard: listening on %s\n", path);
++	return fd;
++}
++
++// One SPI packet: 0x70, then out[] (starting at the header word), then n_in
++// zero words. Returns 1 + n_out + n_in response words.
++static void xfer(const uint16_t *out, int n_out, int n_in, uint16_t *resp)
++{
++	int k = 0;
++	resp[k++] = spi_uio_cmd_cont(UIO_MCD_DASH);
++	for (int i = 0; i < n_out; i++) resp[k++] = spi_w(out[i]);
++	for (int i = 0; i < n_in; i++) resp[k++] = spi_w(0);
++	DisableIO();
++}
++
++// Detach: drop the FPGA session so injected input is released immediately.
++static void release_fpga_session()
++{
++	if (!is_megacd()) return;
++	uint16_t out[2] = { (uint16_t)(DASH_SUB_SESSION << 8), 0 };
++	uint16_t resp[3];
++	xfer(out, 2, 0, resp);
++}
++
++static void drop_client(const char *why)
++{
++	if (client_fd < 0) return;
++	printf("MCD dashboard: bridge disconnected (%s)\n", why);
++	close(client_fd);
++	client_fd = -1;
++	in_len = 0;
++	out_len = 0;
++	release_fpga_session();
++}
++
++static void queue_reply(uint16_t type, uint16_t id, uint16_t status, const uint16_t *words, int n)
++{
++	uint8_t *p = out_buf + out_len;
++	wr16(p + 0, type);
++	wr16(p + 2, id);
++	wr16(p + 4, status);
++	wr16(p + 6, (uint16_t)n);
++	wr16(p + 8, (uint16_t)core_epoch);
++	wr16(p + 10, (uint16_t)(core_epoch >> 16));
++	for (int i = 0; i < n; i++) wr16(p + 12 + i * 2, words[i]);
++	out_len += 12 + n * 2;
++}
++
++// Returns bytes consumed, 0 if the frame is incomplete, -1 on a fatal framing error.
++static int handle_frame(const uint8_t *p, int len)
++{
++	if (len < 8) return 0;
++	uint16_t type = rd16(p + 0);
++	uint16_t id = rd16(p + 2);
++	int n_out = rd16(p + 4);
++	int n_in = rd16(p + 6);
++	int frame_len = 8 + n_out * 2;
++
++	if (n_out + n_in > DASH_MAX_XFER_WORDS) return -1;
++	if (len < frame_len) return 0;
++
++	switch (type)
++	{
++	case DASH_IPC_XFER:
++		if (n_out < 1)
++		{
++			queue_reply(type, id, DASH_IPC_BAD_REQUEST, NULL, 0);
++		}
++		else if (!is_megacd())
++		{
++			queue_reply(type, id, DASH_IPC_NOT_MEGACD, NULL, 0);
++		}
++		else
++		{
++			uint16_t out[DASH_MAX_XFER_WORDS];
++			uint16_t resp[DASH_MAX_XFER_WORDS + 1];
++			for (int i = 0; i < n_out; i++) out[i] = rd16(p + 8 + i * 2);
++			xfer(out, n_out, n_in, resp);
++			queue_reply(type, id, DASH_IPC_OK, resp, 1 + n_out + n_in);
++		}
++		break;
++
++	case DASH_IPC_INFO:
++	{
++		uint16_t w[3] = { (uint16_t)(is_megacd() ? 1 : 0), (uint16_t)core_epoch, (uint16_t)(core_epoch >> 16) };
++		queue_reply(type, id, DASH_IPC_OK, w, 3);
++		break;
++	}
++
++	case DASH_IPC_PING:
++		queue_reply(type, id, DASH_IPC_OK, NULL, 0);
++		break;
++
++	default:
++		queue_reply(type, id, DASH_IPC_BAD_REQUEST, NULL, 0);
++		break;
++	}
++
++	return frame_len;
++}
++
++static void flush_out()
++{
++	while (out_len > 0 && client_fd >= 0)
++	{
++		ssize_t n = send(client_fd, out_buf, out_len, MSG_NOSIGNAL);
++		if (n > 0)
++		{
++			memmove(out_buf, out_buf + n, out_len - n);
++			out_len -= n;
++		}
++		else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
++		{
++			return;
++		}
++		else
++		{
++			drop_client("send failed");
++		}
++	}
++}
++
++void dashboard_ipc_core_changed()
++{
++	core_epoch++;
++}
++
++void dashboard_ipc_poll()
++{
++	if (listen_fd < 0)
++	{
++		if (init_failed) return;
++		listen_fd = ipc_listen();
++		if (listen_fd < 0)
++		{
++			printf("MCD dashboard: cannot listen on %s (%s)\n", socket_path(), strerror(errno));
++			init_failed = 1;
++			return;
++		}
++	}
++
++	int fd = accept(listen_fd, NULL, NULL);
++	if (fd >= 0)
++	{
++		if (client_fd >= 0)
++		{
++			close(fd); // one bridge at a time
++		}
++		else
++		{
++			set_nonblock(fd);
++			client_fd = fd;
++			in_len = 0;
++			out_len = 0;
++			printf("MCD dashboard: bridge connected\n");
++		}
++	}
++
++	if (client_fd < 0) return;
++
++	flush_out();
++	if (client_fd < 0) return;
++
++	if (in_len < IN_BUF_SIZE)
++	{
++		ssize_t n = recv(client_fd, in_buf + in_len, IN_BUF_SIZE - in_len, 0);
++		if (n > 0) in_len += n;
++		else if (n == 0) { drop_client("eof"); return; }
++		else if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) { drop_client("recv failed"); return; }
++	}
++
++	int done = 0;
++	int pos = 0;
++	while (done < DASH_MAX_XFER_PER_POLL && out_len < OUT_HIGH_WATER)
++	{
++		int used = handle_frame(in_buf + pos, in_len - pos);
++		if (used < 0) { drop_client("bad frame"); return; }
++		if (!used) break;
++		pos += used;
++		done++;
++	}
++	if (pos)
++	{
++		memmove(in_buf, in_buf + pos, in_len - pos);
++		in_len -= pos;
++	}
++
++	flush_out();
++}
+diff --git a/support/megacd/dashboard_ipc.h b/support/megacd/dashboard_ipc.h
+new file mode 100644
+index 0000000..8e78ba3
+--- /dev/null
++++ b/support/megacd/dashboard_ipc.h
+@@ -0,0 +1,35 @@
++#ifndef DASHBOARD_IPC_H
++#define DASHBOARD_IPC_H
++
++// MegaCD dashboard IPC adapter.
++//
++// Lets the megacd-dashboard bridge reach the core's dashboard endpoint
++// (HPS command 0x70) while Main stays the only owner of HPS I/O.
++// Wire format: MegaCD_MiSTer/docs/dashboard-protocol.md, section 9.
++
++#include <stdint.h>
++
++#define UIO_MCD_DASH            0x70
++#define DASH_MAGIC_ACK          0xDB26
++#define DASH_SUB_SESSION        0x0F
++
++#define DASH_IPC_XFER           1
++#define DASH_IPC_INFO           2
++#define DASH_IPC_PING           3
++
++#define DASH_IPC_OK             0
++#define DASH_IPC_NOT_MEGACD     1
++#define DASH_IPC_BAD_REQUEST    2
++
++#define DASH_MAX_XFER_WORDS     64   // n_out + n_in per packet
++#define DASH_MAX_XFER_PER_POLL  8
++
++#define DASH_DEFAULT_SOCKET     "/tmp/megacd-dashboard.sock"
++
++// Called once per user_io_poll() iteration. Never blocks.
++void dashboard_ipc_poll();
++
++// Called whenever Main (re)identifies the loaded core.
++void dashboard_ipc_core_changed();
++
++#endif
+diff --git a/user_io.cpp b/user_io.cpp
+index d7a71a7..18372fa 100644
+--- a/user_io.cpp
++++ b/user_io.cpp
+@@ -36,6 +36,7 @@
+ #include "ide_cdrom.h"
+ #include "support/minimig/akiko_cd32.h"
+ #include "support/minimig/cdtv_cd.h"
++#include "support/megacd/dashboard_ipc.h"
+ #ifdef PROFILING
+ #include "profiling.h"
+ #endif
+@@ -466,6 +467,7 @@ void user_io_read_core_name()
+ 	is_neogeo_type = 0;
+ 	is_minimig_type = 0;
+ 	is_megacd_type = 0;
++	dashboard_ipc_core_changed();
+ 	is_pce_type = 0;
+ 	is_archie_type = 0;
+ 	is_gba_type = 0;
+@@ -3947,6 +3949,7 @@ void user_io_poll()
+ 	}
+ 
+ 	if (is_megacd()) mcd_poll();
++	dashboard_ipc_poll();
+ 	if (is_pce()) pcecd_poll();
+ 	if (is_saturn()) saturn_poll();
+ 	if (is_cdi()) cdi_poll();
