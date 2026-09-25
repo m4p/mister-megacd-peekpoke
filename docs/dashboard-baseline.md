@@ -78,5 +78,4 @@ Reports are kept on the build host in `~/claude/reports/megacd-baseline/`.
 ## Still to record
 
 - [ ] DE10-Nano board revision and SDRAM module size
-- [ ] Desert Bus disc image and BIOS hashes (never distributed)
 - [ ] A second CD title (optional regression reference)
