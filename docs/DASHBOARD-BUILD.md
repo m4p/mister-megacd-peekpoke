@@ -110,11 +110,19 @@ numbers against the GUI once.
 
 ## 3. Main_MiSTer (ARM)
 
-**Build host:**
+Install the ARM GNU Toolchain 10.2-2020.11 (`arm-none-linux-gnueabihf-`) once. The script
+downloads it to `/opt`, smoke-tests it, and with `--profile` adds it to `PATH` in `~/.bashrc`.
+Do not use Ubuntu's `gcc-arm-linux-gnueabihf` package: it has the wrong prefix and, on 16.04,
+GCC 5.
+
+**Build host (x86_64 Linux, e.g. Ubuntu 16.04):**
+
+```bash
+MegaCD_MiSTer/scripts/setup_arm_toolchain.sh --profile && source ~/.bashrc
+```
 
 ```bash
 set -euo pipefail
-export PATH="/opt/gcc-arm-10.2-2020.11-x86_64-arm-none-linux-gnueabihf/bin:$PATH"   # adjust
 git -C Main_MiSTer rev-parse HEAD            # aa271e41ebbf616903f9e0216b0900aead5bfce1
 git -C Main_MiSTer status --short            # user_io.cpp modified, support/megacd/dashboard_ipc.* added
 make -C Main_MiSTer
