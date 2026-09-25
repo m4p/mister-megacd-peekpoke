@@ -1,8 +1,7 @@
 # Dashboard baseline record (plan Task 1)
 
-**Date:** 2026-09-25 · **Status:** source baseline recorded. **The unchanged Quartus build, the
-fitter/timing reports, and the hardware boot reference have not been produced.** The
-workspace this was written on has no Quartus installation and no MiSTer.
+**Date:** 2026-09-25 · **Status:** source baseline, unchanged Quartus build, and hardware reference
+recorded (sections below).
 
 ## Source revisions
 
@@ -43,15 +42,41 @@ contract defines.
 | Multicorner timing | disabled in QSF | `MegaCD.qsf` |
 | Main toolchain | `arm-none-linux-gnueabihf`, GCC 10.2.1 | `Main_MiSTer/Makefile` |
 
-## Still to record on the build host and hardware
+## Baseline build (2026-09-25)
 
-- [ ] `quartus_sh --version` output and the host OS.
-- [ ] Unchanged baseline: `quartus_sh --flow compile MegaCD -c MegaCD` from a `git archive` of
-      `a3a3da81`, with all `.rpt` and `.summary` files, the log, and the RBF SHA-256 stored in
-      `reports/megacd-baseline/` (commands in [DASHBOARD-BUILD.md](DASHBOARD-BUILD.md)).
-- [ ] Fitted ALMs, registers, M10K, DSP and PLLs, plus worst setup/hold per clock, entered into
-      `dashboard-feasibility.md` §3.
-- [ ] DE10-Nano board revision, SDRAM module size, MiSTer Linux version, and deployed Main version.
-- [ ] Desert Bus disc image and BIOS hashes (never distributed).
-- [ ] Baseline hardware run: Desert Bus boot, CD audio, controller, backup save, and a second
-      CD title.
+Build host: Ubuntu 16.04.7 x86_64 VM (4 vCPU, 10 GB), **Quartus Prime Lite 17.0.0 Build 595** (not
+17.0.2; the result below shows it builds a working core). Source: `git archive a3a3da8`,
+`quartus_sh --flow compile MegaCD -c MegaCD`, default seed 1. Wall time 2 h 06 min (synthesis
+22 min, then the fitter, with the project's Placement Effort Multiplier 4.0).
+
+| Item | Value |
+|---|---|
+| Fitter | Successful, `5CSEBA6U23I7` |
+| ALMs | 25,152 / 41,910 (60 %) |
+| Registers | 33,332 |
+| Block memory bits | 4,029,388 / 5,662,720 (71 %) |
+| **RAM blocks (M10K)** | **535 / 553 (97 %): 18 free, the scarcest resource** |
+| DSP blocks | 49 / 112 |
+| PLLs | 3 / 6 |
+| Timing | all setup/hold slack positive; tightest setup +0.320 ns (HDMI PLL), hold +0.157 ns (JTAG) |
+| RBF SHA-256 | `06b5a9365e39cbea3ac619cd18fcfc2233dcdacfff374265bb93efa7650b833a` |
+
+Reports are kept on the build host in `~/claude/reports/megacd-baseline/`.
+
+## Hardware reference (2026-09-25)
+
+| Item | Value |
+|---|---|
+| MiSTer | Linux 6.18.38-MiSTer, release 260912, 491 MB RAM, network over Wi-Fi |
+| Main | official release 20260912 (identical to `releases/MiSTer_20260912`) |
+| Stock core on the card | `MegaCD_20260603.rbf` (upstream release; older than `a3a3da8`) |
+| Game | Penn & Teller's Smoke and Mirrors (`PTSM1.cue`), which contains Desert Bus; BIOS `boot.rom` |
+| Baseline RBF installed as | `_Dashboard/MegaCD_Baseline_20260925.rbf` + `Desert Bus (baseline).mgl` |
+| Result | BIOS license screen, then the game intro, rendered from disc data; **audio, controller, and backup-RAM save persistence confirmed by the owner** |
+| Backup | `/media/fat/backup-before-dashboard-20260925/` (Main, stock RBF, `MiSTer.ini`, saves, config) |
+
+## Still to record
+
+- [ ] DE10-Nano board revision and SDRAM module size
+- [ ] Desert Bus disc image and BIOS hashes (never distributed)
+- [ ] A second CD title (optional regression reference)
