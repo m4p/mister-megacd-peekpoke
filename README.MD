@@ -24,3 +24,10 @@ support BIOS per game. Place cd_bios.rom in game's folder.
 
 ### Pier Solar
 Place cartridge dump named cart.rom into game's folder
+
+### Desert Bus remote dashboard (experimental)
+The `MegaCD_Dashboard` revision adds an endpoint for the Desert Bus dashboard, which runs on
+another computer. The current milestone is telemetry and input only. See
+[docs/DASHBOARD-DEPLOYMENT.md](docs/DASHBOARD-DEPLOYMENT.md),
+[docs/DASHBOARD-BUILD.md](docs/DASHBOARD-BUILD.md), and
+[docs/dashboard-feasibility.md](docs/dashboard-feasibility.md).
