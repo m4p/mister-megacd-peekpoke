@@ -10,7 +10,7 @@ integration can and cannot do today, and why.
 | 1. Baseline | **Not run** | No Quartus on the development workspace; see [dashboard-baseline.md](dashboard-baseline.md). |
 | 2. Feasibility (freeze, prefetch re-fetch, state restore) | **Not run** | Needs gate 1 numbers and Quartus spikes; inventory started in [dashboard-state-inventory.md](dashboard-state-inventory.md). |
 | 3. Control | **Blocked** | Depends on gate 2 (freeze). The transport and input subset below is implemented and simulated but not fitted. |
-| 4. Full state | **Blocked** | Depends on gate 2. |
+| 4. Full state | **Deferred** | Savestates are nice-to-have (§5). |
 
 **Consequence:** the package is at the **transport milestone**. It is **not** the control
 milestone, and it is **not conformant** with `DASHBOARD-API.md`. The bridge refuses each missing
@@ -70,22 +70,38 @@ revision: in that configuration the `hps_ext` claim and the injected pad inputs 
   leave the console frozen. Revisit this when freeze exists: plan §4.1 wants a deliberate user
   pause kept apart from a failed transaction.
 
-## 5. Remaining work, in plan order
+## 5. Scope decision (2026-09-25, project owner)
+
+After the transport milestone is validated on hardware, the **next milestone is the control
+milestone**: pause/resume, CPU-bus patches, VRAM peek/poke, and the VRAM refresh token, which
+is every dashboard feature except Save State and Load Fullauto. **Native savestates are
+nice-to-have.** They are deferred behind the control milestone and are no longer a
+completion requirement.
+
+This changes plan §1 and §12, which made full native state part of done. Gate 2 now covers
+only freeze and prefetch correctness; the state-restore spike moves to the optional
+savestate workstream. Until that workstream lands, `/state/save` and `/state/load` keep
+answering `feature_unavailable` (the refresh token excepted), and the dashboard keeps those
+buttons greyed out.
+
+## 6. Remaining work, in order
 
 1. **Gate 1** (build host): baseline build and reports; build the `MegaCD_Dashboard` revision;
    run `scripts/check_dashboard_reports.py`; confirm the staging RAM inferred as M10K.
 2. **Hardware smoke test** of this increment: stock behaviour unchanged (CD audio, saves, second
    title), `/bus-peek` values plausible while driving, input latency measured on the pad
    (DASHBOARD-DEPLOYMENT.md §7).
-3. **Gate 2 spike:**
+3. **Gate 2 (control):**
    - an FX68K instruction-boundary stop with prefetch re-fetch, with a testbench that patches an
      already-prefetched extension word;
    - a VDP/DMA quiesce acknowledgement;
-   - a representative state-restore hook for FX68K, a VDP register block, and a `jt12_sh`
-     shift RAM.
+   - a measurement of whether a 68K-only stop is enough for work-RAM writes (no other writer
+     during driving) or a whole-machine freeze is required.
 
    Record the area and timing of each.
-4. With a passing gate 2: `FREEZE` (user pause and transaction freeze), a CD media barrier in
-   `megacd.cpp`, `WORKRAM_WRITE` and VRAM ports, the refresh token, then Tasks 8–9.
-5. If gate 2 fails on area or timing: stop and put the scope decision to the owner, as
-   plan §1 requires.
+4. **Control milestone:** `FREEZE` (user pause and transaction freeze, video freezer, audio mute),
+   a CD media barrier in `megacd.cpp`, `WORKRAM_WRITE` with prefetch handling, VRAM
+   read/write ports, and the refresh token; then conformance against all non-savestate items.
+5. **Optional, later:** the native savestate workstream (the state-restore spike, then plan
+   Tasks 8–9). If its spike shows it does not fit, drop it without affecting the control
+   milestone.
