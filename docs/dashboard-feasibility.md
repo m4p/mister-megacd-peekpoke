@@ -7,7 +7,7 @@ integration can and cannot do today, and why.
 
 | Gate (plan §7) | Status | Evidence / blocker |
 |---|---|---|
-| 1. Baseline | **Not run** | No Quartus on the development workspace; see [dashboard-baseline.md](dashboard-baseline.md). |
+| 1. Baseline | **Baseline done** (2026-09-25) | Unchanged core built in the Ubuntu 16.04 VM (Quartus 17.0.0 Build 595), fit and timing clean, boots and plays on hardware. The dashboard-revision half is pending. See [dashboard-baseline.md](dashboard-baseline.md). |
 | 2. Feasibility (freeze, prefetch re-fetch, state restore) | **Not run** | Needs gate 1 numbers and Quartus spikes; inventory started in [dashboard-state-inventory.md](dashboard-state-inventory.md). |
 | 3. Control | **Blocked** | Depends on gate 2 (freeze). The transport and input subset below is implemented and simulated but not fitted. |
 | 4. Full state | **Deferred** | Savestates are nice-to-have (§5). |
@@ -32,7 +32,7 @@ feature explicitly with HTTP 501 and `feature_unavailable`. Nothing is emulated.
 
 | Configuration | ALMs | Registers | M10K | DSP | Worst setup / hold | Result |
 |---|---|---|---|---|---|---|
-| Unmodified baseline | — | — | — | — | — | not built |
+| Unmodified baseline | 25,152 / 41,910 (60 %) | 33,332 | 535 / 553 (97 %) | 49 / 112 | +0.320 ns (HDMI PLL) / +0.157 ns (JTAG) | fit OK, timing met, hardware OK |
 | Transport/input (`MegaCD_Dashboard` revision, this code) | — | — | — | — | — | not built |
 | Control milestone | — | — | — | — | — | not implemented |
 | Full native state | — | — | — | — | — | not implemented |
