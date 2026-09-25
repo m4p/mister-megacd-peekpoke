@@ -14,6 +14,7 @@ typedef struct dash_err {
 typedef struct dash_dev {
 	transport_t *t;
 	int have_session;
+	int session_lost;         // last failure: FPGA rejected the old session, nothing executed
 	uint8_t gen;
 	uint32_t epoch;
 	uint16_t features;

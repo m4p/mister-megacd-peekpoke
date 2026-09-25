@@ -39,9 +39,29 @@ static void ipc_close(ipc_ctx *c)
 	c->fd = -1;
 }
 
+// A connection whose peer went away (Main restarts itself on every core load)
+// shows up as readable-with-EOF or hung up while no request is outstanding.
+static int ipc_stale(int fd)
+{
+	struct pollfd p = { fd, POLLIN, 0 };
+	if (poll(&p, 1, 0) <= 0) return 0;
+	if (p.revents & (POLLHUP | POLLERR | POLLNVAL)) return 1;
+	if (p.revents & POLLIN) {
+		char b;
+		ssize_t n = recv(fd, &b, 1, MSG_PEEK | MSG_DONTWAIT);
+		return n == 0 || (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK);
+	}
+	return 0;
+}
+
 static int ipc_connect(ipc_ctx *c)
 {
-	if (c->fd >= 0) return 0;
+	if (c->fd >= 0) {
+		if (!ipc_stale(c->fd)) return 0;
+		close(c->fd);        // detected before sending: nothing is lost or repeated
+		c->fd = -1;
+		c->retry_at_ms = 0;  // reconnect now, without backoff
+	}
 	long long now = now_ms();
 	if (now < c->retry_at_ms) return -1;
 
@@ -57,7 +77,7 @@ static int ipc_connect(ipc_ctx *c)
 	memcpy(addr.sun_path, c->path, sizeof(addr.sun_path));   // same size, NUL-terminated by snprintf
 	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		close(fd);
-		c->backoff_ms = c->backoff_ms ? (c->backoff_ms * 2 > 2000 ? 2000 : c->backoff_ms * 2) : 100;
+		c->backoff_ms = c->backoff_ms ? (c->backoff_ms * 2 > 1000 ? 1000 : c->backoff_ms * 2) : 100;
 		c->retry_at_ms = now + c->backoff_ms;
 		return -1;
 	}

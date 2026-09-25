@@ -218,7 +218,9 @@ chmod +x $F
 ```
 
 The bridge may start before Main or the core. It retries the IPC socket with backoff (100 ms
-up to 2 s) on each request. Reboot and check with `start.sh status`.
+up to 1 s) on each request. Main restarts itself on every core load; the bridge notices the
+dead connection before sending, reconnects, re-opens its session, and retries once, so the
+first request after loading the core already succeeds. Reboot and check with `start.sh status`.
 
 Removal:
 

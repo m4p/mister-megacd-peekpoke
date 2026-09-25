@@ -66,7 +66,9 @@ static int run(dash_dev *d, xfer_t *x, int n, dash_err *e)
 	}
 	d->last_packet_ms = dash_now_ms();
 	if (d->have_session && d->t->epoch != epoch) {
+		// A reloaded core starts in session 0 and rejected every packet of this batch.
 		invalidate(d);
+		d->session_lost = 1;
 		dev_set_err(e, 503, "core_unavailable", "the core was reloaded; the dashboard session was reset");
 		return -1;
 	}
@@ -89,6 +91,7 @@ static int run(dash_dev *d, xfer_t *x, int n, dash_err *e)
 		if (sub != SUB_PROBE && sub != SUB_SESSION && x[i].n_out + x[i].n_in >= 2 &&
 		    x[i].resp[2] == RES_SESSION && FL_GEN(x[i].resp[1]) != d->gen) {
 			invalidate(d);
+			d->session_lost = 1;
 			dev_set_err(e, 503, "core_unavailable", "the FPGA session was reset (core reset or reload)");
 			return -1;
 		}
@@ -177,7 +180,7 @@ static void recover_busy(dash_dev *d)
 	run(d, &x, 1, &e);
 }
 
-int dev_mem(dash_dev *d, int op, int space, uint32_t addr, int len,
+static int dev_mem_once(dash_dev *d, int op, int space, uint32_t addr, int len,
             const uint8_t *wdata, uint8_t *rdata, dash_err *e)
 {
 	static xfer_t x[40];
@@ -275,7 +278,7 @@ int dev_mem(dash_dev *d, int op, int space, uint32_t addr, int len,
 	return -1;
 }
 
-int dev_input(dash_dev *d, uint16_t press, uint16_t release, dash_err *e)
+static int dev_input_once(dash_dev *d, uint16_t press, uint16_t release, dash_err *e)
 {
 	if (dev_ensure(d, e)) return -1;
 	xfer_t x;
@@ -286,7 +289,9 @@ int dev_input(dash_dev *d, uint16_t press, uint16_t release, dash_err *e)
 	return 0;
 }
 
-int dev_pause(dash_dev *d, int pause, dash_err *e)
+static int dev_status_once(dash_dev *d, dash_err *e);
+
+static int dev_pause_once(dash_dev *d, int pause, dash_err *e)
 {
 	if (dev_ensure(d, e)) return -1;
 	if (!(d->features & FEAT_FREEZE)) {
@@ -303,7 +308,7 @@ int dev_pause(dash_dev *d, int pause, dash_err *e)
 	// Report success only once the machine reached the requested state.
 	long long deadline = dash_now_ms() + d->op_timeout_ms;
 	for (;;) {
-		if (dev_status(d, e)) return -1;
+		if (dev_status_once(d, e)) return -1;
 		if (!!(d->flags & FL_FROZEN) == !!pause) return 0;
 		if (dash_now_ms() > deadline) {
 			dev_set_err(e, 504, "operation_timeout", "the console did not %s within %d ms",
@@ -314,7 +319,7 @@ int dev_pause(dash_dev *d, int pause, dash_err *e)
 	}
 }
 
-int dev_status(dash_dev *d, dash_err *e)
+static int dev_status_once(dash_dev *d, dash_err *e)
 {
 	if (dev_ensure(d, e)) return -1;
 	xfer_t x;
@@ -332,4 +337,34 @@ void dev_heartbeat(dash_dev *d)
 	dash_err e;
 	hdr(&x, d, SUB_HEARTBEAT, 0, NULL, 0);
 	run(d, &x, 1, &e);
+}
+
+// After a core reload the first request finds the old session rejected; nothing
+// in that batch executed, so re-establish the session and run it once more.
+#define RETRY_ON_SESSION_LOSS(call) do { \
+	d->session_lost = 0; \
+	int r_ = (call); \
+	if (r_ && d->session_lost) { d->session_lost = 0; r_ = (call); } \
+	return r_; \
+} while (0)
+
+int dev_mem(dash_dev *d, int op, int space, uint32_t addr, int len,
+            const uint8_t *wdata, uint8_t *rdata, dash_err *e)
+{
+	RETRY_ON_SESSION_LOSS(dev_mem_once(d, op, space, addr, len, wdata, rdata, e));
+}
+
+int dev_input(dash_dev *d, uint16_t press, uint16_t release, dash_err *e)
+{
+	RETRY_ON_SESSION_LOSS(dev_input_once(d, press, release, e));
+}
+
+int dev_pause(dash_dev *d, int pause, dash_err *e)
+{
+	RETRY_ON_SESSION_LOSS(dev_pause_once(d, pause, e));
+}
+
+int dev_status(dash_dev *d, dash_err *e)
+{
+	RETRY_ON_SESSION_LOSS(dev_status_once(d, e));
 }

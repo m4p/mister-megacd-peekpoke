@@ -133,12 +133,13 @@ static void test_hw_features(const char *dir)
 	      && has("\"input\":true") && has("\"read_consistency\":\"word\""), "capabilities: %s", out);
 	CHECK(api_handle(&a, "GET", "/status", "", 0, out, sizeof(out)) == 200 && has("\"connected\":true"), "status: %s", out);
 
-	// core reload: in-flight session is invalidated, then re-established
+	// core reload: the old session is rejected (nothing executes), the bridge
+	// re-probes and retries once, so the first request after a reload succeeds
 	call(&a, "/input", "{\"press\":[\"left\"]}");
 	mock_set_core(t, 1, 1);
-	CHECK(call(&a, "/bus-peek", "{\"bus\":\"main68k\",\"address\":16740330,\"length\":2}") == 503 && has("core_unavailable"), "reload: %s", out);
-	CHECK(call(&a, "/bus-peek", "{\"bus\":\"main68k\",\"address\":16740330,\"length\":2}") == 200, "re-probed: %s", out);
+	CHECK(call(&a, "/bus-peek", "{\"bus\":\"main68k\",\"address\":16740330,\"length\":2}") == 200, "first request after reload: %s", out);
 	CHECK(d.held == 0, "held cleared by reload");
+	CHECK(mock_joy(t) == 0, "new core has no injected input");
 
 	// different core loaded
 	mock_set_core(t, 0, 1);

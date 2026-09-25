@@ -258,15 +258,21 @@ def main():
         st, j = peek(b, 0xFF6FEA, 2)
         check(st in (503, 504) and j["error"]["code"] in ("core_unavailable", "operation_timeout"), f"Main gone: {st}")
         sim = Sim(args.sim, sock, "--wram-seed", "7")
-        ok = False
-        for _ in range(40):
-            st, j = peek(b, 0xFF6FEA, 2)
-            if st == 200:
-                ok = j["data"] == wram_bytes(0xFF6FEA, 2, seed=7)
-                break
-            time.sleep(0.1)
-        check(ok, "bridge reconnects to the new Main and sees the new core's RAM")
+        time.sleep(0.2)   # let the new Main create its socket (it does so on its first poll)
+        st, j = peek(b, 0xFF6FEA, 2)
+        check(st == 200 and j.get("data") == wram_bytes(0xFF6FEA, 2, seed=7),
+              "first request after a Main restart succeeds and sees the new core's RAM: %s %s" % (st, j))
         check(sim.joy in (None, 0), "no stale input carried into the new core")
+
+        print("Main restarts between two requests (what a core load does on the MiSTer)")
+        st, j = peek(b, 0xFF6FEA, 2)
+        check(st == 200, "connected before the restart")
+        sim.stop()
+        sim = Sim(args.sim, sock, "--wram-seed", "9")   # no request while Main is gone
+        time.sleep(0.2)
+        st, j = peek(b, 0xFF6FEA, 2)
+        check(st == 200 and j.get("data") == wram_bytes(0xFF6FEA, 2, seed=9),
+              "first request after the restart succeeds: %s %s" % (st, j))
 
         print("wrong core / stock RBF")
         sim.stop()
