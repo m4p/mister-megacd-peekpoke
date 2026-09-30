@@ -234,6 +234,33 @@ Removal:
 sed -i '/# >>> megacd-dashboard >>>/,/# <<< megacd-dashboard <<</d' /media/fat/linux/user-startup.sh
 ```
 
+### Boot straight into the dashboard core (optional)
+
+Main's `bootcore` option accepts an `.mgl`: it looks for the exact file name in every `_`
+folder. The file must mount the disc, for example `_Dashboard/Desert Bus (control).mgl`:
+
+```xml
+<mistergamedescription>
+	<rbf>_Dashboard/MegaCD_DashCtl</rbf>
+	<file delay="1" type="s" index="0" path="/media/fat/games/MegaCD/Desert Bus/PTSM1.cue"/>
+</mistergamedescription>
+```
+
+In the `[MiSTer]` section of `/media/fat/MiSTer.ini`, keep the file's CRLF line endings and set:
+
+```ini
+bootcore=Desert Bus (control).mgl
+;bootcore_timeout=10
+```
+
+With `bootcore_timeout` commented out, the core loads without a countdown; with a value (10–30)
+the menu counts down first, so another core can still be chosen. The game itself still starts
+at the BIOS screen. Getting to the driving state needs START, START, DOWN, DOWN, then START (or
+`tests/dashboard/hw_start_desertbus.py`). To undo, comment the `bootcore=` line out again.
+
+**Tested 2026-09-30:** after a reboot, the control core is loaded and reachable through the
+bridge within about 40 s.
+
 ## 9. Connect the dashboard computer
 
 1. Find the MiSTer address: the MiSTer menu's network info, `ip -4 addr` on the MiSTer, or
