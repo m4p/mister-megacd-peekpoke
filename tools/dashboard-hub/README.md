@@ -10,7 +10,7 @@ writes and input in order, logs telemetry to InfluxDB, and reconnects by itself.
  scripts        ─┘     :8766             └──▶ InfluxDB
 ```
 
-Python 3.8+, standard library only. Runs on any machine on the LAN (a Pi, a NAS, your Mac).
+Python 3.8+, standard library only. Run it on the Mac, not on the MiSTer (the point is to keep load off the MiSTer).
 
 ## Run
 

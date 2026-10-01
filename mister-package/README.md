@@ -19,6 +19,7 @@ on 2026-09-26 and the autostart/bootcore test on 2026-09-30 (fetched 2026-10-01)
 | (edit) `/media/fat/linux/user-startup.sh` | | block that starts the bridge at boot |
 | (edit, optional) `/media/fat/MiSTer.ini` | | `bootcore=Desert Bus (control).mgl`, `bootcore_timeout` commented out |
 | `dashboard/dashboard.html` | the dashboard computer | the dashboard page (from Genesis-Plus-GX/sdl) |
+| `hub/dashboard_hub.py`, `hub/run-hub.sh` | the Mac (not the MiSTer) | dashboard hub: the single client of the bridge, InfluxDB logging (copy of `tools/dashboard-hub/`) |
 | `source/0001-megacd-dashboard-ipc.patch` | | the Main patch, for reference or rebuilding |
 | `install.sh`, `uninstall.sh` | | install/remove over SSH from your computer |
 | `fetch-binaries.sh` | | refills `sdcard/` from a MiSTer or the build VM |
@@ -108,8 +109,27 @@ On the dashboard computer:
 cd dashboard && python3 -m http.server 8000
 ```
 
-Open http://localhost:8000/dashboard.html and enter `http://<mister-ip>:8765` as the server.
+Open http://localhost:8000/dashboard.html and enter `http://<mister-ip>:8765` as the server,
+or use the hub on the Mac instead (next section) when more than one dashboard connects.
 Save State / Load Fullauto stay greyed out (not supported on the MiSTer).
+
+## Run the dashboard hub (on the Mac)
+
+The hub runs on the Mac, never on the MiSTer. It is the only client of the bridge: it polls
+the telemetry once, serves any number of dashboards from that, forwards writes and input in
+order, reconnects by itself, and can log telemetry to InfluxDB.
+
+```bash
+hub/run-hub.sh http://<mister-ip>:8765
+# with InfluxDB 2.x:
+INFLUX_TOKEN=... hub/run-hub.sh http://<mister-ip>:8765 \
+    --influx-url http://localhost:8086 --influx-org home --influx-bucket desertbus
+```
+
+Open http://localhost:8766/ (the hub serves the dashboard page) and connect it to
+`http://<mac-ip>:8766`; other computers use the same address. Point every dashboard at the
+hub, not at the MiSTer. Options, the InfluxDB fields and a test are described in
+`tools/dashboard-hub/README.md`.
 
 ## Caveats
 
