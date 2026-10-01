@@ -12,7 +12,7 @@ URL (e.g. http://hub-host:8766) as the server.
 
 What it does:
   - Keeps one keep-alive connection to the bridge and sends every request through a single
-    worker, in priority order (input/pause first, then client requests, then polling), with
+    worker, in priority order (writes and input first, then polling, then client reads), with
     an upper bound on the request rate. However many dashboards connect, the MiSTer sees one
     client.
   - Polls the telemetry block (speed, lateral position, clock, distance, odometer, day phase,
@@ -97,7 +97,9 @@ class UpstreamDown(Exception):
 
 class Upstream:
     """The single connection to the bridge. All traffic goes through one worker thread."""
-    P_CONTROL, P_CLIENT, P_POLL = 0, 1, 2
+    # writes and input first; polling before client reads, so a flood of client cache
+    # misses can never starve the poll loop that keeps the cache fresh
+    P_CONTROL, P_POLL, P_CLIENT = 0, 1, 2
 
     def __init__(self, base, timeout, max_rate):
         u = urllib.parse.urlsplit(base if "://" in base else "http://" + base)
@@ -265,19 +267,24 @@ class Upstream:
 # --------------------------------------------------------------------------- cache
 
 class Cache:
-    """Memory blocks per address space ('bus' or 'vram') with their read time."""
+    """Memory blocks per address space ('bus' or 'vram') and the last /status, with read times.
+    Each part has a generation; a poll result read before a write to that part is dropped."""
+    PARTS = ("bus", "vram", "status")
 
     def __init__(self):
         self.lock = threading.Lock()
         self.blocks = {"bus": {}, "vram": {}}    # space -> {start: (bytes, t)}
         self.status = None                        # (raw bytes, t)
-        self.generation = 0
+        self.gens = dict.fromkeys(self.PARTS, 0)
 
-    def put(self, space, start, data, t=None, generation=None):
+    def gen(self, part):
+        return self.gens[part]
+
+    def put(self, space, start, data, generation=None):
         with self.lock:
-            if generation is not None and generation != self.generation:
+            if generation is not None and generation != self.gens[space]:
                 return    # read raced with a write: drop it
-            self.blocks[space][start] = (bytes(data), t or now())
+            self.blocks[space][start] = (bytes(data), now())
 
     def get(self, space, addr, length, max_age):
         t_now = now()
@@ -293,7 +300,7 @@ class Cache:
 
     def put_status(self, raw, generation=None):
         with self.lock:
-            if generation is None or generation == self.generation:
+            if generation is None or generation == self.gens["status"]:
                 self.status = (raw, now())
 
     def get_status(self, max_age):
@@ -302,18 +309,27 @@ class Cache:
                 return self.status[0]
         return None
 
-    def invalidate(self):
+    def invalidate(self, parts=PARTS):
+        """Mark parts stale: the next read of them goes to the MiSTer."""
         with self.lock:
-            self.generation += 1
-            for space in self.blocks:
-                self.blocks[space] = {s: (d, 0.0) for s, (d, _) in self.blocks[space].items()}
-            self.status = None
+            for part in parts:
+                self.gens[part] += 1
+                if part == "status":
+                    self.status = None
+                else:
+                    self.blocks[part] = {st: (d, 0.0) for st, (d, _) in self.blocks[part].items()}
 
     def clear(self):
         with self.lock:
-            self.generation += 1
+            for part in self.PARTS:
+                self.gens[part] += 1
             self.blocks = {"bus": {}, "vram": {}}
             self.status = None
+
+
+# which cached parts a forwarded request can change
+INVALIDATES = {"/input": ("status",), "/pause": ("status",), "/resume": ("status",),
+               "/bus-poke": ("bus",), "/poke": ("vram",)}
 
 
 def plan_reads(ranges, max_len, gap=16):
@@ -411,7 +427,7 @@ class Poller:
             return [(a, n) for (s, a, n) in self.demand if s == space]
 
     def _read(self, space, addr, length):
-        gen = self.cache.generation
+        gen = self.cache.gen(space)
         if space == "bus":
             st, j = self.up.request_json("POST", "/bus-peek", {"bus": "main68k", "address": addr, "length": length, "encoding": "hex"})
         else:
@@ -422,7 +438,7 @@ class Poller:
         return False
 
     def _cycle(self):
-        gen = self.cache.generation
+        gen = self.cache.gen("status")
         status, raw = self.up.request("GET", "/status", None, Upstream.P_POLL)
         if status == 200:
             self.cache.put_status(raw, gen)
@@ -614,6 +630,8 @@ class Hub(http.server.ThreadingHTTPServer):
         self.clients = {}
         self.clients_lock = threading.Lock()
         self.write_lock = threading.Lock()
+        self.inflight = {}                 # (space, addr, len) -> Event of the read in flight
+        self.inflight_lock = threading.Lock()
         self.influx = None
         self.dashboard = None
         if args.dashboard and os.path.isfile(args.dashboard):
@@ -692,7 +710,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._forward(method, path, body, Upstream.P_CLIENT)
             if path in ("/bus-peek", "/peek") and method == "POST" and self._cached_read(path, body):
                 return None
-            prio = Upstream.P_CONTROL if path in CONTROL else Upstream.P_CLIENT
+            prio = Upstream.P_CLIENT if path in READ_ONLY else Upstream.P_CONTROL
             return self._forward(method, path, body, prio)
         except UpstreamDown as e:
             return self._send(503, error_body("upstream_unavailable", str(e)))
@@ -730,16 +748,34 @@ class Handler(http.server.BaseHTTPRequestHandler):
             max_age = max(max_age, s.args.demand_interval * 2)
         data = s.cache.get(space, addr, length, max_age)
         if data is None:
-            gen = s.cache.generation
-            status, raw = s.up.request("POST", path, body, Upstream.P_CLIENT)
-            s.stats["forwarded"] += 1
-            if status == 200:
+            # one upstream read per range: concurrent misses wait for the one in flight
+            key = (space, addr, length)
+            with s.inflight_lock:
+                ev = s.inflight.get(key)
+                leader = ev is None
+                if leader:
+                    ev = s.inflight[key] = threading.Event()
+            if not leader:
+                ev.wait(s.args.timeout * 3)
+                data = s.cache.get(space, addr, length, max_age)
+            if data is None:
                 try:
-                    s.cache.put(space, addr, bytes.fromhex(json.loads(raw)["data"]), generation=gen)
-                except (ValueError, KeyError):
-                    pass
-            self._send(status, raw)
-            return True
+                    gen = s.cache.gen(space)
+                    status, raw = s.up.request("POST", path, body, Upstream.P_CLIENT)
+                    s.stats["forwarded"] += 1
+                    if status == 200:
+                        try:
+                            s.cache.put(space, addr, bytes.fromhex(json.loads(raw)["data"]), generation=gen)
+                        except (ValueError, KeyError):
+                            pass
+                finally:
+                    if leader:
+                        with s.inflight_lock:
+                            s.inflight.pop(key, None)
+                        ev.set()
+                self._send(status, raw)
+                return True
+            s.stats["coalesced"] += 1
         s.stats["cache_hits"] += 1
         self._send(200, json.dumps({"ok": True, "data": data.hex()}).encode())
         return True
@@ -753,15 +789,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if lock:
             lock.acquire()
         try:
+            parts = INVALIDATES.get(path, Cache.PARTS)
             if write:
-                s.cache.invalidate()
+                s.cache.invalidate(parts)
             # /input with both press and release in one body would tap twice if repeated
             retry = not (path.startswith("/state") or (path == "/input" and body and b"press" in body and b"release" in body))
             status, raw = s.up.request(method, path, body, prio, retry=retry)
             s.stats["forwarded"] += 1
             if write:
                 s.stats["writes"] += 1
-                s.cache.invalidate()
+                s.cache.invalidate(parts)
                 log.info("%s %s %s -> %d", self.client_address[0], path, (body or b"")[:200].decode(errors="replace"), status)
             return self._send(status, raw)
         finally:

@@ -38,7 +38,7 @@ InfluxDB 1.x: `--influx-url http://localhost:8086 --influx-db desertbus [--influ
 
 | Concern | Behaviour |
 |---|---|
-| Load on the MiSTer | One connection; one worker sends requests in priority order (input/pause/resume → other client requests → polling) and never faster than `--max-rate` (60/s). 10 clients making 1000 requests cause about 27 upstream requests. |
+| Load on the MiSTer | One connection; one worker sends requests in priority order (writes and input → polling → client reads that missed the cache; concurrent misses for one range share a single read) and never faster than `--max-rate` (60/s). 10 clients making 1000 requests cause about 27 upstream requests. |
 | Telemetry | Speed, lateral position, clock, distance, odometer, day phase and game state are read every `--interval` (0.25 s) in 4 reads, plus `/status`. Dashboard reads of these addresses are served from the cache (at most `--max-age`, default 2 × interval, old). |
 | Other reads | Any other `/bus-peek` or VRAM `/peek` range a client reads (patch status sites, the air freshener) is forwarded once, then polled every `--demand-interval` (0.5 s; VRAM `--vram-interval` 1 s) while clients keep asking (`--demand-ttl` 10 s) and answered from the cache. |
 | Writes | `/bus-poke`, `/poke`, `/input`, `/pause`, `/resume` are forwarded one at a time, invalidate the cache before and after, and are logged. A read after a write always sees the write. |
