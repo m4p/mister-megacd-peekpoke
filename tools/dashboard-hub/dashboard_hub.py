@@ -71,7 +71,7 @@ TELEMETRY = {
     "splat_latch": (0xFF7104, 4),      # bug splat trigger latch (X, Y)
     "splat_slot": (0xFF17F8, 4),       # object slot 10: sprite id, X
     "stop_slot": (0xFF15FA, 8),        # bus stop sign object: id, x, y, flags (0x20 active, 0x10 visible)
-    "stop_progress": (0xFF164E, 2),    # bus stop sign approach progress (6..140)
+    "stop_progress": (0xFF164E, 2),    # bus stop sign approach progress (6..140; beside the bus at ~55..85)
 }
 # Read every --slow-interval: they change rarely (patches, name entry)
 SLOW_TELEMETRY = {
@@ -1099,8 +1099,8 @@ def main():
     e.add_argument("--webhook-header", action="append", default=[], metavar="'NAME: VALUE'", help="extra HTTP header for webhooks (repeatable)")
     e.add_argument("--webhook-timeout", type=float, default=5.0, help="webhook request timeout in s (default 5)")
     e.add_argument("--webhook-retries", type=int, default=3, help="retries per webhook delivery (default 3)")
-    e.add_argument("--stop-min-progress", type=int, default=30, help="bus stop window start, sign progress (default 30)")
-    e.add_argument("--stop-max-progress", type=int, default=75, help="bus stop window end, sign progress (default 75)")
+    e.add_argument("--stop-min-progress", type=int, default=55, help="bus stop window start, sign progress (default 55)")
+    e.add_argument("--stop-max-progress", type=int, default=85, help="bus stop window end, sign progress (default 85)")
     ap.add_argument("--log-file", help="also log to this file (rotated at 5 MB)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()

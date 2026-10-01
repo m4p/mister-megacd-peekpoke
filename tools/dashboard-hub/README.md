@@ -62,7 +62,7 @@ unless noted):
 
 | Event | Fires when | Details |
 |---|---|---|
-| `bus_stop` | the bus stops (speed 0) while the bus stop sign is beside the road (sign progress `--stop-min-progress`..`--stop-max-progress`, 30..75), then **drives off again**. Never fires if the bus crashes or is towed while standing there. | `leg_miles`, `stopped_s` |
+| `bus_stop` | the bus stops (speed 0) while the bus stop sign is beside the road (sign progress `--stop-min-progress`..`--stop-max-progress`, 55..85: large on the shoulder next to the bus; at 32 it is still small near the horizon), then **drives off again**. Never fires if the bus crashes or is towed while standing there. | `leg_miles`, `stopped_s` |
 | `bus_stop_missed` | a bus stop sign passes without such a stop | `leg_miles` |
 | `crash` | driving (state 3) ends in an off-road stall (state 1/2; unit-tested) or in a tow after standing still ~30 s (state 4; the game's stall timer `$FF6FFC`) | `leg_miles`, `state`, `cause` |
 | `point` | the distance reaches the end of the leg (648000 units = 360 mi) | `points`, `odometer_miles`, `leg` |

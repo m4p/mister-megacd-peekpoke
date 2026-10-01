@@ -11,7 +11,7 @@ import dashboard_hub as hub
 
 
 def args(**kw):
-    a = argparse.Namespace(stop_min_progress=30, stop_max_progress=75)
+    a = argparse.Namespace(stop_min_progress=55, stop_max_progress=85)
     a.__dict__.update(kw)
     return a
 
@@ -41,22 +41,22 @@ class Detector(unittest.TestCase):
         return tel(stop_active=True, stop_visible=True, stop_progress=progress)
 
     def test_stop_then_drive_off(self):
-        self.feed(tel(), self.approach(20), self.approach(45),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0x200),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0))
+        self.feed(tel(), self.approach(20), self.approach(60),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0x200),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0))
         self.assertEqual(self.names(), [], "no event while standing at the stop")
-        self.feed(tel(stop_active=True, stop_visible=True, stop_progress=51, speed_raw=0x800),
+        self.feed(tel(stop_active=True, stop_visible=True, stop_progress=70, speed_raw=0x800),
                   self.approach(90), tel())
         self.assertEqual(self.names(), ["bus_stop"])
 
     def test_crash_at_stop_gives_no_bus_stop(self):
-        self.feed(tel(), self.approach(45),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0, game_state=1),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0, game_state=2),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0x2000, game_state=4),
-                  tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0x2000, game_state=3),
+        self.feed(tel(), self.approach(60),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0, game_state=1),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0, game_state=2),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0x2000, game_state=4),
+                  tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0x2000, game_state=3),
                   tel())
         self.assertEqual(self.names(), ["crash"])
 
@@ -70,10 +70,17 @@ class Detector(unittest.TestCase):
                   self.approach(80), tel())
         self.assertEqual(self.names(), ["bus_stop_missed"])
 
+    def test_stopping_with_the_sign_still_far_away_does_not_count(self):
+        # live: at progress 32 the sign is still small near the horizon
+        self.feed(tel(), self.approach(30), tel(stop_active=True, stop_visible=True, stop_progress=32, speed_raw=0),
+                  tel(stop_active=True, stop_visible=True, stop_progress=33, speed_raw=0x6000),
+                  self.approach(100), tel())
+        self.assertEqual(self.names(), ["bus_stop_missed"])
+
     def test_bus_stop_fires_once(self):
-        stopped = tel(stop_active=True, stop_visible=True, stop_progress=50, speed_raw=0)
-        moving = tel(stop_active=True, stop_visible=True, stop_progress=52, speed_raw=0x6000)
-        self.feed(tel(), self.approach(40), stopped, moving, stopped, moving, tel())
+        stopped = tel(stop_active=True, stop_visible=True, stop_progress=69, speed_raw=0)
+        moving = tel(stop_active=True, stop_visible=True, stop_progress=71, speed_raw=0x6000)
+        self.feed(tel(), self.approach(58), stopped, moving, stopped, moving, tel())
         self.assertEqual(self.names(), ["bus_stop"])
 
     def test_crash(self):

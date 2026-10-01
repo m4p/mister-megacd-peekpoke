@@ -1200,7 +1200,7 @@ async function tick(sess) {
     // the "Bus Stop Every Mile" patch replaces the scan at $FFBA54 with
     // divu.w #n (80FC nnnn): a stop whenever distance % n == 0. The sign object
     // ($FF15FA, flags +7: $20 active, $10 visible; progress at $FF164E) is beside the
-    // road while progress is ~30..75 on the outbound leg.
+    // bus while progress is ~55..85 on the outbound leg (at 32 it is still far away).
     const stopTable = hexToBytes(await busPeek(0xFFBA2E, 24, sess));
     const stopCode = hexToBytes(await busPeek(0xFFBA54, 4, sess));
     const stopFlags = hexToBytes(await busPeek(0xFF15FA, 8, sess))[7];
@@ -1225,7 +1225,7 @@ async function tick(sess) {
     const stopValue = document.getElementById("stopValue");
     const stopEta = document.getElementById("stopEta");
     const signActive = (stopFlags & 0x20) !== 0, signVisible = (stopFlags & 0x10) !== 0;
-    if (signActive && signVisible && stopProg >= 30 && stopProg <= 75) {
+    if (signActive && signVisible && stopProg >= 55 && stopProg <= 85) {
       stopValue.textContent = "at the stop";
       stopEta.textContent = speedMph <= 0 ? "stopped at the bus stop" : "sign beside the road: stop now";
     } else if (nextStop === null) {
