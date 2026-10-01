@@ -86,6 +86,7 @@ def wait_for(pred, timeout=15, step=0.1):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bridge", default=os.path.join(HERE, "../../linux/dashboard-bridge/build/megacd-dashboard"))
+    ap.add_argument("--dashboard", default=os.path.join(HERE, "../../mister-package/dashboard/dashboard.html"))
     args = ap.parse_args()
     tmp = tempfile.mkdtemp()
 
@@ -106,7 +107,8 @@ def main():
                              "--influx-org", "home", "--influx-bucket", "desertbus", "--influx-token", "secret",
                              "--influx-interval", "0.2", "--influx-flush", "0.3",
                              "--webhook", f"crash=http://127.0.0.1:{HOOK_PORT}/crash",
-                             "--webhook", f"*=http://127.0.0.1:{HOOK_PORT}/all"],
+                             "--webhook", f"*=http://127.0.0.1:{HOOK_PORT}/all",
+                             "--dashboard", args.dashboard],
                             stdout=hub_log, stderr=subprocess.STDOUT)
     try:
         check(wait_for(lambda: hub("GET", "/hub")[1]["upstream"]["connected"]), "hub connects to the bridge")
@@ -170,6 +172,42 @@ def main():
         st, t = hub("GET", "/hub/telemetry")
         check({"next_stop_miles", "next_stop_eta_s", "driver_name", "stop_active"} <= set(t["telemetry"]), "telemetry has next stop and driver fields")
         poke(0xFF7002, "0003")
+
+        # actions: every dashboard button as POST /hub/action/...
+        def peek(addr, n):
+            return call(BRIDGE_PORT, "POST", "/bus-peek", {"bus": "main68k", "address": addr, "length": n})[1]["data"]
+        st, acts = hub("GET", "/hub/actions")
+        check(st == 200 and len(acts["patches"]) == 9 and "autopilot" in acts["actions"], f"/hub/actions lists actions and {len(acts.get('patches', []))} patches")
+        st, j = hub("POST", "/hub/action/patch/steering/off", {})
+        check(st == 200 and peek(0xFF842C, 8) == "4e714e714e714e71", "patch via URL form writes the site")
+        st, j = hub("POST", "/hub/action/patch", {"id": "throttle", "state": "max"})
+        check(st == 200 and peek(0xFF8498, 10) == "33fcffff00ff6fea4e75" and peek(0xFFC004, 2) == "1400", "multi-site patch writes every site")
+        check(hub("GET", "/status")[1]["paused"] is False, "multi-site patch resumes after its own pause")
+        st, ps = hub("GET", "/hub/patches")
+        check(st == 200 and ps["patches"]["steering"] == "off" and ps["patches"]["throttle"] == "max", f"/hub/patches reports states ({ps.get('patches')})")
+        st, j = hub("POST", "/hub/action/patch/freshener/on", {})
+        check(st == 200, f"VRAM patch (air freshener) applied ({st} {j})")
+        check(hub("GET", "/hub/patches")[1]["patches"]["freshener"] == "on", "VRAM patch status matches its signature")
+        check(hub("POST", "/hub/action/pause", {})[0] == 200 and hub("GET", "/status")[1]["paused"] is True, "pause action")
+        check(hub("POST", "/hub/action/toggle-pause", {})[0] == 200, "toggle-pause action")
+        time.sleep(0.6)
+        check(hub("GET", "/status")[1]["paused"] is False, "toggle-pause resumed")
+        st, j = hub("POST", "/hub/action/save-state", {"path": "hubtest.gp0"})
+        print(f"     save-state on the mock: HTTP {st} {j.get('error', {}).get('code', 'ok')}")
+        check(st in (200, 501), "save-state forwarded (501 when the server has no savestates)")
+        poke(0xFF7002, "0003")
+        poke(0xFF6FFA, "2800")                 # far left: the autopilot must steer right
+        st, j = hub("POST", "/hub/action/autopilot/on", {})
+        check(st == 200 and j["autopilot"] == "on", "autopilot on")
+        check(wait_for(lambda: "easing right" in hub("GET", "/hub/events?since=999999")[1]["autopilot"]["status"], 5),
+              "hub autopilot steers toward the road centre")
+        st, j = hub("POST", "/hub/action/autopilot", {"state": "off"})
+        time.sleep(0.5)
+        check(j["autopilot"] == "off" and hub("GET", "/status")[1]["held"] == [], "autopilot off releases the wheel")
+        check(hub("POST", "/hub/action/patch/steering/nope", {})[0] == 404, "unknown patch state -> 404")
+        check(hub("POST", "/hub/action/jump", {})[0] == 404, "unknown action -> 404")
+        check(hub("GET", "/hub/action/pause")[0] == 405, "actions need POST")
+        hub("POST", "/hub/action/patch/throttle/off", {})
 
         # many clients: upstream rate stays bounded
         t0 = time.time()

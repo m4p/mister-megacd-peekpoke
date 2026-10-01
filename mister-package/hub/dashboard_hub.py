@@ -39,6 +39,8 @@ import logging
 import logging.handlers
 import os
 import queue
+import random
+import re
 import signal
 import socket
 import sys
@@ -696,6 +698,249 @@ class Webhooks:
                         time.sleep(min(2 ** attempt, 30))
 
 
+# --------------------------------------------------------------------------- actions
+
+def load_patches(path):
+    """Patch definitions from the dashboard: the JSON block <script id="patchData"> in
+    dashboard.html (or a plain .json file with the same list)."""
+    if not path or not os.path.isfile(path):
+        return []
+    text = open(path, encoding="utf-8").read()
+    m = re.search(r'<script type="application/json" id="patchData">(.*?)</script>', text, re.S)
+    data = json.loads(m.group(1) if m else text)
+    for p in data:
+        for site in p["sites"]:
+            site["address"] = int(site["address"], 16)
+        if p.get("vram"):
+            p["vram"]["address"] = int(p["vram"]["address"], 16)
+        for st in p["states"]:
+            for e in st.get("extra") or []:
+                e["address"] = int(e["address"], 16)
+    return data
+
+
+class ActionError(Exception):
+    def __init__(self, status, code, message):
+        super().__init__(message)
+        self.status, self.code = status, code
+
+
+class Autopilot:
+    """The dashboard's autopilot, run by the hub (same steering model and constants as
+    dashboard.html): let the bus drift to a random limit (30-55 % of the half-road), then
+    ease it toward a random spot (10-35 %) on the other side with single proportional taps.
+
+    Unlike the dashboard it does not tap START when the game leaves the driving state: on
+    the MiSTer that quits Desert Bus after a tow (START on the timecard ends the game) and
+    then loops the game-selection menu. It releases the pad and waits for driving instead."""
+    TICK, RATE, TAP_MIN, TAP_MAX, DEADZONE = 0.22, 0.0009, 0.070, 0.300, 0.12
+
+    def __init__(self, hub):
+        self.hub = hub
+        self.lock = threading.Lock()
+        self.enabled = False
+        self.gen = 0
+        self._status = "off"
+
+    def set(self, on):
+        with self.lock:
+            if on == self.enabled:
+                return
+            self.enabled, self.gen = on, self.gen + 1
+            gen = self.gen
+        if on:
+            self.status = "starting"
+            threading.Thread(target=self._run, args=(gen,), name="autopilot", daemon=True).start()
+            log.info("autopilot on")
+        else:
+            self.status = "off"
+            self._release(["left", "right"])
+            log.info("autopilot off")
+
+    @property
+    def status(self):
+        return self._status if self.enabled else "off"
+
+    @status.setter
+    def status(self, text):
+        self._status = text
+
+    def _release(self, buttons):
+        try:
+            self.hub.write("/input", {"release": buttons})
+        except (UpstreamDown, ActionError):
+            pass
+
+    def _peek(self, addr, length):
+        st, j = self.hub.up.request_json("POST", "/bus-peek", {"bus": "main68k", "address": addr, "length": length},
+                                         Upstream.P_CONTROL)
+        if st != 200:
+            raise UpstreamDown(f"bus-peek answered HTTP {st}")
+        return int(j["data"], 16)
+
+    def _run(self, gen):
+        mode, limit, target, released = "idle", 0.0, None, False
+        while self.enabled and gen == self.gen:
+            t0 = time.monotonic()
+            try:
+                gs = self._peek(0xFF7002, 2)
+                norm = (self._peek(0xFF6FFA, 2) - 0x6C00) / 0x4800
+                if gs != 3:
+                    if not released:
+                        self._release(["left", "right"])
+                        released, mode, target = True, "waiting", None
+                    self.status = f"waiting for the driving state (game state {gs})"
+                elif mode != "driving":
+                    mode, limit, target, released = "driving", 0.30 + random.random() * 0.25, None, False
+                    self.status = "driving"
+                else:
+                    if target is None and abs(norm) >= limit:
+                        target = -(1 if norm > 0 else -1) * (0.10 + random.random() * 0.25)
+                    if target is None:
+                        self.status = f"drifting (react at {limit:.0%}, now {norm:+.0%})"
+                    else:
+                        err = target - norm
+                        if abs(err) < self.DEADZONE:
+                            target, limit = None, 0.30 + random.random() * 0.25
+                            self.status = f"settled at {norm:+.0%}"
+                        else:
+                            d = "left" if err < 0 else "right"
+                            self.status = f"easing {d} toward {target:+.0%} (at {norm:+.0%})"
+                            self.hub.write("/input", {"press": [d]})
+                            try:
+                                time.sleep(max(self.TAP_MIN, min(abs(err) / self.RATE / 1000, self.TAP_MAX)))
+                            finally:
+                                self._release([d])
+            except (UpstreamDown, ActionError, ValueError, KeyError) as e:
+                self.status = f"error: {e}"
+                self._release(["left", "right"])
+            time.sleep(max(0.0, self.TICK - (time.monotonic() - t0)))
+
+
+class Actions:
+    """Every dashboard button as a hub action, for incoming webhooks and automation."""
+    NAMES = ("pause", "resume", "toggle-pause", "autopilot", "save-state", "load-fullauto", "patch")
+
+    def __init__(self, hub, patches):
+        self.hub, self.patches = hub, patches
+        self.autopilot = Autopilot(hub)
+
+    def describe(self):
+        return {
+            "ok": True,
+            "actions": {
+                "pause": "POST /hub/action/pause",
+                "resume": "POST /hub/action/resume",
+                "toggle-pause": "POST /hub/action/toggle-pause",
+                "autopilot": 'POST /hub/action/autopilot {"state": "on"|"off"|"toggle"} (or /hub/action/autopilot/on)',
+                "save-state": 'POST /hub/action/save-state {"path": "name.gp0"}',
+                "load-fullauto": "POST /hub/action/load-fullauto",
+                "patch": 'POST /hub/action/patch {"id": ID, "state": KEY} (or /hub/action/patch/ID/KEY)',
+            },
+            "patches": [{"id": p["id"], "name": p["name"], "states": {st["key"]: st["label"] for st in p["states"]}}
+                        for p in self.patches],
+            "autopilot": self.autopilot.status,
+        }
+
+    def run(self, name, body, extra):
+        """Returns a JSON-able dict; raises ActionError or UpstreamDown."""
+        if name in ("pause", "resume"):
+            return self._call(f"/{name}")
+        if name == "toggle-pause":
+            return self._call("/resume" if self._paused() else "/pause")
+        if name == "autopilot":
+            want = (extra[0] if extra else body.get("state", "toggle")).lower()
+            if want not in ("on", "off", "toggle"):
+                raise ActionError(400, "invalid_state", "autopilot state must be on, off or toggle")
+            self.autopilot.set(not self.autopilot.enabled if want == "toggle" else want == "on")
+            return {"ok": True, "autopilot": "on" if self.autopilot.enabled else "off"}
+        if name == "save-state":
+            tel = (self.hub.poller.telemetry or ({}, 0))[0]
+            path = body.get("path") or (f"{int(tel['leg_miles'])}.gp0" if "leg_miles" in tel
+                                        else time.strftime("savestate-%Y%m%d-%H%M%S.gp0"))
+            return self._call("/state/save", {"path": path})
+        if name == "load-fullauto":
+            self.autopilot.set(False)
+            self.hub.write("/input", {"release": ["left", "right", "start"]})
+            return self._call("/state/load", {"path": "desertbus-fullauto.gp0"})
+        if name == "patch":
+            pid = extra[0] if extra else body.get("id")
+            key = extra[1] if len(extra) > 1 else body.get("state")
+            return self.apply_patch(pid, key)
+        raise ActionError(404, "unknown_action", f"unknown action {name!r}; see GET /hub/actions")
+
+    def _paused(self):
+        """Ask the bridge: the poller's copy of /status can predate a pause sent just now."""
+        st, j = self.hub.up.request_json("GET", "/status", None, Upstream.P_CONTROL)
+        if st != 200:
+            raise ActionError(st, "status_unavailable", f"/status answered HTTP {st}")
+        return bool(j.get("paused"))
+
+    def _call(self, path, payload=None):
+        status, j = self.hub.write(path, payload)
+        if status != 200 or not j.get("ok", False):
+            err = j.get("error") or {}
+            raise ActionError(status, err.get("code", f"http_{status}"), err.get("message", f"{path}: HTTP {status}"))
+        return j
+
+    def apply_patch(self, pid, key):
+        """Same writes as the dashboard's setPatch(): CPU patches write every site (paused
+        while several sites change); VRAM patches poke the domain, then refresh the VDP
+        pattern cache with the reserved savestate name."""
+        if not self.patches:
+            raise ActionError(501, "feature_unavailable", "no patch definitions: start the hub with --dashboard")
+        patch = next((p for p in self.patches if p["id"] == pid), None)
+        if not patch:
+            raise ActionError(404, "unknown_patch", f"unknown patch {pid!r}; ids: {', '.join(p['id'] for p in self.patches)}")
+        state = next((st for st in patch["states"] if st["key"] == key), None)
+        if not state:
+            raise ActionError(404, "unknown_state", f"{pid}: unknown state {key!r}; states: {', '.join(st['key'] for st in patch['states'])}")
+        if patch.get("vram"):
+            self._call("/poke", {"domain": "vram", "address": patch["vram"]["address"], "data": state["data"], "encoding": "hex"})
+            for ep in ("/state/save", "/state/load"):
+                self._call(ep, {"path": "dashboard-cache-refresh.gp0"})
+        else:
+            writes = [(site["address"], state["hex"][i]) for i, site in enumerate(patch["sites"])]
+            writes += [(e["address"], e["hex"]) for e in state.get("extra") or []]
+            own_pause = len(writes) > 1 and not self._paused()
+            if own_pause:
+                self._call("/pause")
+            done = 0
+            try:
+                for addr, h in writes:
+                    self._call("/bus-poke", {"bus": "main68k", "address": addr, "data": h, "encoding": "hex", "unsafe": True})
+                    done += 1
+            except (ActionError, UpstreamDown) as e:
+                if own_pause and 0 < done < len(writes):
+                    raise ActionError(502, "partial_patch", f"{patch['name']}: {done} of {len(writes)} writes applied ({e}); game left paused")
+                if own_pause:
+                    self._call("/resume")
+                raise
+            if own_pause:
+                self._call("/resume")
+        log.info("patch %s -> %s", pid, key)
+        return {"ok": True, "patch": pid, "state": key, "label": state["label"]}
+
+    def patch_status(self):
+        out = {}
+        for p in self.patches:
+            if p.get("vram"):
+                sig = p["vram"]["sig"]
+                st, j = self.hub.up.request_json("POST", "/peek", {"domain": "vram", "address": p["vram"]["address"] + sig["offset"],
+                                                                   "length": sig["length"]}, Upstream.P_CLIENT)
+                live = [j.get("data", "").lower()] if st == 200 else None
+                match = next((s["key"] for s in p["states"] if live and s.get("sig", "").lower() == live[0]), None)
+            else:
+                live = []
+                for site in p["sites"]:
+                    st, j = self.hub.up.request_json("POST", "/bus-peek", {"bus": "main68k", "address": site["address"],
+                                                                           "length": site["length"]}, Upstream.P_CLIENT)
+                    live.append(j.get("data", "").lower() if st == 200 else None)
+                match = next((s["key"] for s in p["states"] if all(h == live[i] for i, h in enumerate(s["hex"]))), None)
+            out[p["id"]] = match or "mixed"
+        return out
+
+
 # --------------------------------------------------------------------------- influx
 
 def lp_escape(s, chars=",= "):
@@ -857,9 +1102,25 @@ class Hub(http.server.ThreadingHTTPServer):
         self.inflight = {}                 # (space, addr, len) -> Event of the read in flight
         self.inflight_lock = threading.Lock()
         self.influx = None
+        self.actions = None
         self.dashboard = None
         if args.dashboard and os.path.isfile(args.dashboard):
             self.dashboard = args.dashboard
+
+    def write(self, path, payload=None):
+        """A write on behalf of the hub (actions, autopilot): ordered with dashboard writes,
+        cache invalidated around it. Returns (status, parsed json)."""
+        body = None if payload is None else json.dumps(payload).encode()
+        parts = INVALIDATES.get(path, Cache.PARTS)
+        with self.write_lock:
+            self.cache.invalidate(parts)
+            status, raw = self.up.request("POST", path, body, Upstream.P_CONTROL, retry=not path.startswith("/state"))
+            self.cache.invalidate(parts)
+        self.stats["writes"] += 1
+        try:
+            return status, json.loads(raw or b"{}")
+        except ValueError:
+            return status, {}
 
     def seen(self, ip):
         with self.clients_lock:
@@ -919,6 +1180,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, f.read(), "text/html; charset=utf-8")
         if path == "/hub":
             return self._json(200, self._hub_status())
+        if path == "/hub/actions":
+            return self._json(200, s.actions.describe())
+        if path == "/hub/patches":
+            try:
+                return self._json(200, {"ok": True, "patches": s.actions.patch_status()})
+            except UpstreamDown as e:
+                return self._send(503, error_body("upstream_unavailable", str(e)))
+        if path.startswith("/hub/action/"):
+            if method != "POST":
+                return self._send(405, error_body("method_not_allowed", "actions need POST"))
+            name, *extra = [urllib.parse.unquote(x) for x in path[len("/hub/action/"):].split("/") if x]
+            try:
+                req = json.loads(body or b"{}")
+                if not isinstance(req, dict):
+                    raise ValueError
+            except ValueError:
+                return self._send(400, error_body("invalid_json", "body must be a JSON object"))
+            try:
+                result = s.actions.run(name, req, extra)
+            except ActionError as e:
+                return self._send(e.status, error_body(e.code, str(e)))
+            except UpstreamDown as e:
+                return self._send(503, error_body("upstream_unavailable", str(e)))
+            log.info("%s action %s %s -> ok", self.client_address[0], "/".join([name] + extra), json.dumps(req)[:200])
+            return self._json(200, result)
         if path == "/hub/events":
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             try:
@@ -926,7 +1212,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except ValueError:
                 since = 0
             items, last = s.poller.events.since(since)
-            return self._json(200, {"ok": True, "events": items, "last_id": last, "types": list(EVENTS)})
+            return self._json(200, {"ok": True, "events": items, "last_id": last, "types": list(EVENTS),
+                                    "autopilot": {"on": s.actions.autopilot.enabled, "status": s.actions.autopilot.status}})
         if path == "/hub/telemetry":
             tel = s.poller.telemetry
             return self._json(200, {"ok": tel is not None, "time": tel and tel[1], "telemetry": tel and tel[0]})
@@ -952,7 +1239,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not up.up or not up.caps:
             raise UpstreamDown(f"MiSTer bridge at {up.base} is not reachable (reconnecting)")
         caps = dict(up.caps)
-        caps["hub"] = {"server": "dashboard-hub", "version": VERSION, "upstream": up.base}
+        caps["hub"] = {"server": "dashboard-hub", "version": VERSION, "upstream": up.base,
+                       "actions": list(Actions.NAMES), "autopilot": True}
         return self._json(200, caps)
 
     def _cached_read(self, path, body):
@@ -1077,7 +1365,8 @@ def main():
     ap.add_argument("--demand-ttl", type=float, default=10.0, help="stop watching a range this long after the last read (default 10)")
     ap.add_argument("--max-rate", type=float, default=60.0, help="upper bound on requests/s to the MiSTer (default 60)")
     ap.add_argument("--timeout", type=float, default=3.0, help="upstream request timeout in s (default 3)")
-    ap.add_argument("--dashboard", default=None, help="serve this dashboard.html at http://<hub>/")
+    ap.add_argument("--dashboard", default=None, help="serve this dashboard.html at http://<hub>/ (its patch table also drives /hub/action/patch)")
+    ap.add_argument("--patches", default=None, help="patch definitions (dashboard.html or .json; default: --dashboard)")
     ap.add_argument("--no-release", action="store_true", help="do not release buttons on connect/shutdown")
     g = ap.add_argument_group("InfluxDB (optional)")
     g.add_argument("--influx-url", default=os.environ.get("INFLUX_URL"), help="e.g. http://localhost:8086")
@@ -1143,6 +1432,7 @@ def main():
     server.influx = Influx(args) if args.influx_url else None
     webhooks = Webhooks(args.webhook, args.webhook_header, args.webhook_timeout, args.webhook_retries)
     poller.events = EventLog(args, poller, webhooks, lambda: server.influx)
+    server.actions = Actions(server, load_patches(args.patches or args.dashboard))
 
     stop = threading.Event()
     up.start()
@@ -1164,6 +1454,7 @@ def main():
 
     server.shutdown()
     poller.stop.set()
+    server.actions.autopilot.enabled = False
     if not args.no_release and up.up:
         release_all(up, "shutdown")
     if server.influx:

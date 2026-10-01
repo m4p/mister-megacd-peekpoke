@@ -128,8 +128,8 @@ INFLUX_TOKEN=... hub/run-hub.sh http://<mister-ip>:8765 \
 
 Open http://localhost:8766/ (the hub serves the dashboard page) and connect it to
 `http://<mac-ip>:8766`; other computers use the same address. Point every dashboard at the
-hub, not at the MiSTer. Options, the InfluxDB fields and a test are described in
-`tools/dashboard-hub/README.md`.
+hub, not at the MiSTer. Everything the hub does (events and outgoing webhooks, actions for every dashboard button, autopilot, InfluxDB, options) is documented in
+`hub/README.md` (a copy of `tools/dashboard-hub/README.md`).
 
 ## Caveats
 
