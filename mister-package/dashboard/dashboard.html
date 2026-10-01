@@ -1,0 +1,1468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Desert Bus Dashboard</title>
+<style>
+  :root {
+    --bg: #0c0f14;
+    --panel: #161b22;
+    --accent: #3fb950;
+    --accent-dim: #2a6e34;
+    --text: #c9d1d9;
+    --muted: #6e7681;
+    --danger: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: radial-gradient(circle at 50% 0%, #1c2129, var(--bg));
+    font-family: "Segoe UI", system-ui, sans-serif;
+    color: var(--text);
+  }
+  .dash {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    width: min(1000px, 92vw);
+    gap: 20px;
+    padding: 28px;
+    background: var(--panel);
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+    border: 1px solid #2a3038;
+  }
+  @media (max-width: 720px) {
+    .dash { grid-template-columns: repeat(2, 1fr); }
+  }
+  .card {
+    background: #0f1318;
+    border-radius: 12px;
+    padding: 20px 26px;
+    min-width: 180px;
+    border: 1px solid #232a33;
+    position: relative;
+    overflow: hidden;
+  }
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .value {
+    font-family: "DSEG7", "Consolas", monospace;
+    font-size: 40px;
+    font-weight: 700;
+    color: var(--accent);
+    text-shadow: 0 0 12px var(--accent-dim);
+    white-space: nowrap;
+  }
+  .goal-card .value {
+    font-size: 24px;
+  }
+  .unit {
+    font-size: 14px;
+    color: var(--muted);
+    margin-left: 6px;
+  }
+  .subvalue {
+    margin-top: 6px;
+    font-family: "Consolas", monospace;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .bar-track {
+    margin-top: 14px;
+    height: 8px;
+    border-radius: 4px;
+    background: #1d242c;
+    overflow: hidden;
+  }
+  .lat-card { grid-column: 1 / -1; }
+  .lat-card .value { font-size: 24px; }
+  .lat-track {
+    position: relative;
+    margin-top: 12px;
+    height: 14px;
+    border-radius: 7px;
+    background: #1d242c;
+    overflow: hidden;
+  }
+  .lat-zone {
+    position: absolute; top: 0; bottom: 0; width: 8%;
+    background: rgba(248,81,73,0.22);
+  }
+  .lat-zone.left { left: 0; }
+  .lat-zone.right { right: 0; }
+  .lat-center {
+    position: absolute; top: 0; bottom: 0; left: 50%;
+    width: 2px; margin-left: -1px;
+    background: #2a3038;
+  }
+  .lat-marker {
+    position: absolute; top: 50%; left: 50%;
+    width: 10px; height: 10px;
+    transform: translate(-50%, -50%);
+    border-radius: 999px;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent-dim);
+    transition: left 0.4s linear, background 0.2s ease;
+  }
+  .lat-marker.offroad { background: var(--danger); box-shadow: 0 0 8px rgba(248,81,73,0.5); }
+  .bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+    transition: width 0.4s ease;
+  }
+  .status {
+    position: fixed;
+    top: 14px;
+    right: 18px;
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+  }
+  .dot.ok { background: var(--accent); }
+  .footnote {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    margin-top: -4px;
+  }
+  .controls {
+    grid-column: 1 / -1;
+    display: flex;
+    justify-content: center;
+  }
+  #pauseBtn {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 8px;
+    padding: 10px 26px;
+    cursor: pointer;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  #pauseBtn:hover { border-color: var(--accent-dim); }
+  #pauseBtn:active { background: #131820; }
+  #pauseBtn.paused { color: var(--danger); }
+  #pauseBtn:disabled { opacity: 0.5; cursor: default; }
+  #saveStateBtn {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 8px;
+    padding: 10px 26px;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  #saveStateBtn:hover { border-color: var(--accent-dim); }
+  #saveStateBtn:active { background: #131820; }
+  #saveStateBtn:disabled { opacity: 0.5; cursor: default; }
+  #loadAutoBtn {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 8px;
+    padding: 10px 26px;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  #loadAutoBtn:hover { border-color: var(--accent-dim); }
+  #loadAutoBtn:active { background: #131820; }
+  #loadAutoBtn:disabled { opacity: 0.5; cursor: default; }
+  #autopilotBtn {
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 8px;
+    padding: 10px 26px;
+    cursor: pointer;
+    margin-left: 10px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+  #autopilotBtn:hover { border-color: var(--accent-dim); }
+  #autopilotBtn:active { background: #131820; }
+  #autopilotBtn.engaged { color: var(--accent); border-color: var(--accent-dim); }
+
+  .patches {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+  }
+  .patches h2 {
+    margin: 0 0 4px;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .patch-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #0f1318;
+    border: 1px solid #232a33;
+    border-radius: 10px;
+    padding: 10px 16px;
+  }
+  .patch-info { flex: 1; min-width: 0; }
+  .patch-name { font-size: 14px; font-weight: 600; }
+  .patch-desc { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #1d242c;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.on { background: rgba(63,185,80,0.15); color: var(--accent); }
+  .badge.off { background: rgba(248,81,73,0.1); color: var(--danger); }
+  .patch-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+  }
+  .patch-btn {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 7px;
+    padding: 7px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .patch-btn:hover { border-color: var(--accent-dim); }
+  .patch-btn:disabled { opacity: 0.5; cursor: default; }
+  .patch-btn.remove:hover { border-color: var(--danger); }
+  .patch-btn[title]:disabled { cursor: help; }
+
+  .conn {
+    grid-column: 1 / -1;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    background: #0f1318;
+    border: 1px solid #232a33;
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .conn label { font-size: 12px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .conn input {
+    flex: 1 1 240px;
+    min-width: 0;
+    font-family: "Consolas", monospace;
+    font-size: 13px;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 7px;
+    padding: 7px 10px;
+  }
+  .conn input:focus { outline: none; border-color: var(--accent-dim); }
+  .conn button {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    background: #1d242c;
+    border: 1px solid #2a3038;
+    border-radius: 7px;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  .conn button:hover { border-color: var(--accent-dim); }
+  .conn button:disabled { opacity: 0.5; cursor: default; }
+  .conn-target {
+    flex-basis: 100%;
+    font-family: "Consolas", monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .conn-target strong { color: var(--text); font-weight: 600; }
+  .conn-target.live strong { color: var(--accent); }
+  .conn-caps { flex-basis: 100%; font-size: 11px; color: var(--muted); }
+  .conn-caps .gap { color: var(--danger); }
+  .controls button:disabled[title] { cursor: help; }
+</style>
+</head>
+<body>
+
+<div class="status"><span class="dot" id="statusDot"></span><span id="statusText">not connected</span></div>
+
+<div class="dash">
+  <form class="conn" id="connForm" autocomplete="off">
+    <label for="apiInput">Server</label>
+    <input id="apiInput" type="text" spellcheck="false" inputmode="url"
+           placeholder="http://mister.local:8765 or http://192.168.1.50:8765">
+    <button type="submit" id="connectBtn">Connect</button>
+    <button type="button" id="disconnectBtn" disabled>Disconnect</button>
+    <div class="conn-target" id="connTarget">not connected</div>
+    <div class="conn-caps" id="connCaps"></div>
+  </form>
+
+  <div class="card">
+    <h2>Speed</h2>
+    <div class="value" id="speedValue">--<span class="unit">raw</span></div>
+    <div class="bar-track"><div class="bar-fill" id="speedBar"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Time</h2>
+    <div class="value" id="timeValue">--:--</div>
+  </div>
+
+  <div class="card">
+    <h2>Distance Driven</h2>
+    <div class="value" id="distValue">--<span class="unit">mi&asymp;</span></div>
+    <div class="subvalue" id="distRaw">raw: --</div>
+  </div>
+
+  <div class="card goal-card">
+    <h2>ETA: 360mi Leg</h2>
+    <div class="value" id="etaValue">--</div>
+    <div class="subvalue" id="etaRemaining">leg --: -- to go</div>
+  </div>
+
+  <div class="card">
+    <h2>Points</h2>
+    <div class="value" id="pointsValue">--<span class="unit">pts</span></div>
+    <div class="subvalue" id="pointsRaw">completed legs: --</div>
+  </div>
+
+  <div class="card">
+    <h2>Day Phase</h2>
+    <div class="value" id="phaseValue">--</div>
+    <div class="subvalue" id="phaseNext">next: --</div>
+    <div class="subvalue" id="phaseRaw">palette: --</div>
+  </div>
+
+  <div class="card lat-card">
+    <h2>Lateral Position</h2>
+    <div class="value" id="latValue">--</div>
+    <div class="lat-track">
+      <div class="lat-zone left"></div>
+      <div class="lat-zone right"></div>
+      <div class="lat-center"></div>
+      <div class="lat-marker" id="latMarker"></div>
+    </div>
+    <div class="subvalue" id="latRaw">raw: --</div>
+    <div class="subvalue" id="apStatus">autopilot: off</div>
+  </div>
+
+  <div class="controls">
+    <button id="pauseBtn">&#9208; Pause</button>
+    <button id="saveStateBtn">&#128190; Save State</button>
+    <button id="loadAutoBtn">&#129302; Load Fullauto</button>
+    <button id="autopilotBtn">&#128652; Autopilot: OFF</button>
+  </div>
+
+  <div class="footnote">
+    Speed: $FF6FEA (0&ndash;0x6000 = 0&ndash;45mph) &middot; Time: $FF70E4 digit block &middot;
+    Distance Driven: $FF6FDC accumulator &divide; 1800 (resets to baseline each leg,
+    unlike the ever-climbing on-screen wheel) &mdash; baseline+slope fit over 4 samples
+    (4150&rarr;111.6mi, 6676&rarr;113mi, 22871&rarr;122mi, 648000&rarr;469.3mi),
+    109.3mi baseline, all 4 points agree to &asymp;0.01mi &middot;
+    Points: odometer wheel digits $FF70EA&ndash;$FF70F2 minus leg progress
+    ($FF7102 is cleared each interlude, so it can't be used) &middot;
+    Day Phase: $FF709C live palette ptr ($20CB52 day &rarr; $20CED2 night) +
+    $FF6FF8 half-day parity; countdown needs the day/night fix patch
+  </div>
+
+  <div class="patches">
+    <h2>Patches</h2>
+    <div id="patchList"></div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Connection and transport. Every request belongs to a *session*: one chosen
+// server (GPGX on a PC, or the MegaCD MiSTer bridge) plus a generation number.
+// Disconnecting or switching servers aborts the session's in-flight requests,
+// ignores late responses, and releases injected buttons on the OLD server.
+// Delayed actions (a tap's release, the steps of a multi-site patch) stay
+// pinned to the session that started them and never continue on a new one.
+// ---------------------------------------------------------------------------
+const DEFAULT_API = "http://127.0.0.1:8765";
+const STORAGE_KEY = "desertbus.apiBase";
+const REQUEST_TIMEOUT_MS = 5000;
+const RELEASE_ALL = ["left", "right", "start"];
+
+class ApiError extends Error {
+  constructor(status, code, message) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+// Results of a closed session: never shown, never acted on.
+function isStale(err) { return err && (err.code === "stale" || err.code === "aborted"); }
+
+function normalizeBase(raw) {
+  let s = (raw || "").trim();
+  if (!s) throw new Error("enter a server URL, e.g. http://mister.local:8765");
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = "http://" + s;
+  let u;
+  try { u = new URL(s); } catch (e) { throw new Error(`not a valid URL: ${raw}`); }
+  if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("server URL must start with http:// or https://");
+  if (u.username || u.password) throw new Error("server URL must not contain credentials");
+  if (u.search || u.hash) throw new Error("server URL must not contain ? or #");
+  return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
+}
+
+let session = null;   // { base, gen, ctrl, alive, caps }
+let sessionGen = 0;
+
+// Shared fetch helper. opts.method (default POST); opts.pinned sends even after
+// the session closed (used only for button releases on the old target).
+async function api(sess, path, body, opts = {}) {
+  if (!sess || (!sess.alive && !opts.pinned)) throw new ApiError(0, "stale", "not connected");
+  const rc = new AbortController();
+  const timer = setTimeout(() => rc.abort(), opts.timeout || REQUEST_TIMEOUT_MS);
+  const onClose = () => rc.abort();
+  if (!opts.pinned) sess.ctrl.signal.addEventListener("abort", onClose);
+  const init = { method: opts.method || "POST", signal: rc.signal };
+  if (body !== undefined) {
+    init.headers = { "Content-Type": "application/json" };
+    init.body = JSON.stringify(body);
+  }
+  let res, text;
+  try {
+    res = await fetch(sess.base + path, init);
+    text = await res.text();
+  } catch (e) {
+    if (!opts.pinned && !sess.alive) throw new ApiError(0, "aborted", "request cancelled");
+    if (rc.signal.aborted) throw new ApiError(0, "timeout", `${path}: no answer from ${sess.base}`);
+    throw new ApiError(0, "network", `cannot reach ${sess.base}`);
+  } finally {
+    clearTimeout(timer);
+    sess.ctrl.signal.removeEventListener("abort", onClose);
+  }
+  if (!opts.pinned && !sess.alive) throw new ApiError(0, "stale", "stale response");
+  let json = null;
+  try { json = text ? JSON.parse(text) : {}; } catch (e) { json = null; }
+  if (!res.ok || !json || json.ok === false) {
+    const code = json?.error?.code || `http_${res.status}`;
+    const msg = json?.error?.message || `${path}: HTTP ${res.status}`;
+    throw new ApiError(res.status, code, msg);
+  }
+  return json;
+}
+
+async function busPeek(address, length, sess = session) {
+  const json = await api(sess, "/bus-peek", { bus: "main68k", address, length, encoding: "hex" });
+  return json.data; // hex string
+}
+
+function hexToBytes(hex) {
+  const out = [];
+  for (let i = 0; i < hex.length; i += 2) out.push(parseInt(hex.substr(i, 2), 16));
+  return out;
+}
+
+function setStatus(ok, text) {
+  document.getElementById("statusDot").classList.toggle("ok", ok);
+  document.getElementById("statusText").textContent = text;
+}
+
+function showError(err, fallback) {
+  if (isStale(err)) return;
+  setStatus(false, err?.message || fallback);
+}
+
+let isPaused = false;
+let lastDistMiles = null;
+let stateOpActive = false;   // exclusive savestate operation: polling and autopilot hold off
+
+async function callAction(path, sess = session) {
+  return api(sess, path);
+}
+
+function feature(name) {
+  return !!session?.caps?.features?.[name];
+}
+
+// GPGX's server has no /capabilities; it is recognised by a harmless read and
+// assumed to provide the whole contract.
+const GPGX_FEATURES = {
+  bus_peek: true, bus_poke: true, vram_peek: true, vram_poke: true,
+  input: true, pause: true, state: true, vram_refresh_token: true
+};
+
+async function probeCapabilities(sess) {
+  try {
+    const c = await api(sess, "/capabilities", undefined, { method: "GET" });
+    if (c.core && c.core.present === false)
+      throw new ApiError(503, c.core.error?.code || "core_unavailable", c.core.error?.message || "core unavailable");
+    let paused = false;
+    try {
+      const s = await api(sess, "/status", undefined, { method: "GET" });
+      paused = !!s.paused;
+    } catch (e) { if (isStale(e)) throw e; }
+    return { kind: "mister", name: c.target || c.server, build: c.core?.build_id, features: c.features || {}, paused };
+  } catch (e) {
+    if (isStale(e) || e.code === "network" || e.code === "timeout" || e.status >= 500 || e.code === "core_unavailable") throw e;
+    await busPeek(0xFF7002, 2, sess);   // legacy server: prove it answers the contract
+    return { kind: "gpgx", name: "Genesis Plus GX", features: { ...GPGX_FEATURES }, paused: false };
+  }
+}
+
+const pollTimers = [];
+function stopPolling() {
+  while (pollTimers.length) clearInterval(pollTimers.pop());
+}
+function startPolling(sess) {
+  stopPolling();
+  tick(sess);
+  refreshAllPatchStatus(sess);
+  pollTimers.push(setInterval(() => tick(sess), 500));
+  pollTimers.push(setInterval(() => refreshAllPatchStatus(sess), 500));
+}
+
+function setPauseButton() {
+  const btn = document.getElementById("pauseBtn");
+  btn.textContent = isPaused ? "▶ Resume" : "⏸ Pause";
+  btn.classList.toggle("paused", isPaused);
+}
+
+const UNAVAILABLE = "not supported by the connected server";
+function applyCapabilities() {
+  const connected = !!session;
+  const gate = (id, ok) => {
+    const b = document.getElementById(id);
+    b.disabled = !connected || !ok;
+    b.title = connected && !ok ? UNAVAILABLE : "";
+  };
+  gate("pauseBtn", feature("pause"));
+  gate("saveStateBtn", feature("state"));
+  gate("loadAutoBtn", feature("state"));
+  gate("autopilotBtn", feature("input") && feature("bus_peek"));
+  document.querySelectorAll(".patch-btn").forEach(b => {
+    const p = PATCHES.find(x => x.id === b.dataset.id);
+    const ok = p.vram ? feature("vram_poke") && feature("vram_refresh_token") : feature("bus_poke");
+    b.disabled = !connected || !ok;
+    b.title = connected && !ok ? UNAVAILABLE : "";
+  });
+
+  const target = document.getElementById("connTarget");
+  const caps = document.getElementById("connCaps");
+  target.classList.toggle("live", connected);
+  if (!connected) {
+    caps.textContent = "";
+    return;
+  }
+  const c = session.caps;
+  target.innerHTML = "";
+  target.append("connected to ");
+  const strong = document.createElement("strong");
+  strong.textContent = session.base;
+  target.append(strong, ` · ${c.name}${c.build ? ` build ${c.build}` : ""}`);
+  const missing = [
+    ["bus_poke", "CPU patches"], ["vram_poke", "air freshener"], ["pause", "pause"],
+    ["state", "savestates"], ["input", "autopilot"]
+  ].filter(([k]) => !feature(k)).map(([, n]) => n);
+  caps.innerHTML = "";
+  if (missing.length) {
+    const span = document.createElement("span");
+    span.className = "gap";
+    span.textContent = `unavailable on this server: ${missing.join(", ")}`;
+    caps.append(span, " — status badges and telemetry still work");
+  } else {
+    caps.textContent = "all dashboard features available";
+  }
+}
+
+async function connect(raw, { remember = true } = {}) {
+  let base;
+  try { base = normalizeBase(raw); } catch (e) { setStatus(false, e.message); return; }
+  await disconnect();
+  const sess = { base, gen: ++sessionGen, ctrl: new AbortController(), alive: true, caps: null };
+  session = sess;
+  document.getElementById("apiInput").value = base;
+  document.getElementById("connTarget").textContent = `connecting to ${base}…`;
+  document.getElementById("disconnectBtn").disabled = false;
+  setStatus(false, `connecting to ${base}…`);
+  try {
+    sess.caps = await probeCapabilities(sess);
+  } catch (e) {
+    if (session !== sess) return;
+    sess.alive = false;
+    session = null;
+    document.getElementById("connTarget").textContent = `not connected (last attempt: ${base})`;
+    document.getElementById("disconnectBtn").disabled = true;
+    applyCapabilities();
+    setStatus(false, e.message || "connection failed");
+    return;
+  }
+  if (session !== sess) return;
+  if (remember) {
+    try { localStorage.setItem(STORAGE_KEY, base); } catch (e) { /* storage unavailable */ }
+  }
+  isPaused = sess.caps.paused;
+  setPauseButton();
+  applyCapabilities();
+  setStatus(true, isPaused ? "paused" : "live");
+  startPolling(sess);   // autopilot is never resumed automatically
+}
+
+async function disconnect() {
+  const sess = session;
+  if (!sess) return;
+  session = null;
+  sess.alive = false;
+  stopAutopilot();
+  stopPolling();
+  sess.ctrl.abort();
+  document.getElementById("disconnectBtn").disabled = true;
+  document.getElementById("connTarget").textContent = `not connected (was ${sess.base})`;
+  applyCapabilities();
+  setStatus(false, "not connected");
+  if (sess.caps?.features?.input)
+    await api(sess, "/input", { release: RELEASE_ALL }, { pinned: true, timeout: 2000 }).catch(() => {});
+}
+
+document.getElementById("connForm").addEventListener("submit", ev => {
+  ev.preventDefault();
+  connect(document.getElementById("apiInput").value);
+});
+document.getElementById("disconnectBtn").addEventListener("click", () => disconnect());
+
+async function togglePause() {
+  const sess = session;
+  const btn = document.getElementById("pauseBtn");
+  btn.disabled = true;
+  try {
+    await callAction(isPaused ? "/resume" : "/pause", sess);
+    if (sess !== session) return;
+    isPaused = !isPaused;
+    setPauseButton();
+    setStatus(true, isPaused ? "paused" : "live");
+  } catch (err) {
+    showError(err, "action failed");
+  } finally {
+    if (sess === session) btn.disabled = !feature("pause");
+  }
+}
+
+document.getElementById("pauseBtn").addEventListener("click", togglePause);
+
+// Savestate operations are exclusive: telemetry, patch polling, and the
+// autopilot hold off until they finish.
+async function withStateOp(fn) {
+  stateOpActive = true;
+  try { return await fn(); } finally { stateOpActive = false; }
+}
+
+async function saveState() {
+  const sess = session;
+  const btn = document.getElementById("saveStateBtn");
+  const defaultName = lastDistMiles !== null
+    ? `${Math.trunc(lastDistMiles)}.gp0`
+    : `savestate-${new Date().toISOString().replace(/[:.]/g, "-")}.gp0`;
+  const filename = prompt("Save state filename:", defaultName);
+  if (!filename || sess !== session) return;
+
+  btn.disabled = true;
+  try {
+    const json = await withStateOp(() => api(sess, "/state/save", { path: filename }));
+    setStatus(true, `saved ${json.path}`);
+  } catch (err) {
+    showError(err, "save failed");
+  } finally {
+    if (sess === session) btn.disabled = !feature("state");
+  }
+}
+
+document.getElementById("saveStateBtn").addEventListener("click", saveState);
+
+async function loadAutoState() {
+  const sess = session;
+  const btn = document.getElementById("loadAutoBtn");
+  btn.disabled = true;
+  // A load replaces the machine state: stop the autopilot and let go of the pad first.
+  stopAutopilot();
+  try {
+    await sendInput({ release: RELEASE_ALL }, sess);
+    await withStateOp(() => api(sess, "/state/load", { path: "desertbus-fullauto.gp0" }));
+    setStatus(true, "loaded desertbus-fullauto.gp0");
+  } catch (err) {
+    showError(err, "load failed");
+  } finally {
+    if (sess === session) btn.disabled = !feature("state");
+  }
+}
+document.getElementById("loadAutoBtn").addEventListener("click", loadAutoState);
+
+// ---------------------------------------------------------------------------
+// Autopilot: human-style steering. Lets the bus drift toward one shoulder
+// until a randomly chosen limit, then eases it toward a modest spot on the
+// OTHER side of the road, and repeats. When the game leaves the driving state
+// (stall/tow/arrival), it waits 2s then taps START until we're driving again.
+//
+// Control model: steering ($FF6FFA) is position-based with NO momentum — a
+// press moves ~0.09% of the half-road per ms and stops dead on release. So a
+// correction is a single short tap sized to the remaining error, and the bus
+// eases toward the target over a few ticks. Keeping the API call-rate LOW is
+// what keeps the emulator's single-threaded HTTP server fast (a tight poll
+// loop overloads it to ~1s/call, and a held button over that second would
+// slam the bus across the whole road). Taps are capped so even a delayed
+// release can't reach a shoulder.
+// ---------------------------------------------------------------------------
+const AP = {
+  enabled: false,
+  mode: "idle",        // idle | recovery | driving
+  driftLimit: 0,       // |norm| that triggers a correction
+  target: null,        // signed norm we're easing toward (null = drifting)
+  recoveryAt: 0,       // earliest timestamp recovery taps may start
+  lastTap: 0,
+  gen: 0,
+  timer: null,
+  session: null,       // the server this autopilot run steers
+};
+const AP_TICK_MS = 220;   // one observe-and-maybe-tap per tick (relaxed = low load)
+const AP_RATE = 0.0009;   // fraction of half-road moved per ms of press
+const AP_TAP_MIN = 70;    // ms — shortest tap
+const AP_TAP_MAX = 300;   // ms — longest tap (~27% of half-road; bounds overshoot)
+const AP_DEADZONE = 0.12; // stop correcting within this of the target
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+function latNorm(lat) { return (lat - 0x6C00) / 0x4800; } // 0 = center, ±1 = shoulder
+
+async function sendInput(payload, sess = session) {
+  return api(sess, "/input", payload);
+}
+
+// A release always reaches the server the press went to, even if the user
+// disconnected or switched servers in between.
+function releaseOn(sess, buttons) {
+  return api(sess, "/input", { release: buttons }, { pinned: true, timeout: 2000 });
+}
+
+async function tapStart(sess) {
+  await sendInput({ press: ["start"] }, sess);
+  try { await sleep(120); } finally { await releaseOn(sess, ["start"]).catch(() => {}); }
+}
+
+// React once the bus drifts past 0.30..0.55 of the half-road (kept short of the
+// 1.0 shoulder), then ease toward a modest 0.10..0.35 on the far side.
+function newDriftLimit() { return 0.30 + Math.random() * 0.25; }
+function newTarget() { return 0.10 + Math.random() * 0.25; }
+
+function apStatus(text) {
+  document.getElementById("apStatus").textContent = `autopilot: ${text}`;
+}
+
+async function apReleaseAll(sess) {
+  try { await releaseOn(sess, RELEASE_ALL); } catch (e) {}
+}
+
+async function autopilotStep() {
+  const sess = AP.session;
+  if (!AP.enabled || !sess?.alive) return;
+  if (stateOpActive) { apStatus("waiting for savestate operation"); return; }
+  try {
+    const gs = parseInt(await busPeek(0xFF7002, 2, sess), 16);
+    const norm = latNorm(parseInt(await busPeek(0xFF6FFA, 2, sess), 16));
+
+    if (gs !== 3) {
+      // Not driving (stall chain, tow, arrival interlude...): hands off the
+      // wheel, wait 2s, then tap START until we're driving again.
+      if (AP.mode !== "recovery") {
+        AP.mode = "recovery";
+        AP.recoveryAt = Date.now() + 2000;
+        AP.target = null;
+        await apReleaseAll(sess);
+      } else if (Date.now() >= AP.recoveryAt && Date.now() - AP.lastTap > 800) {
+        AP.lastTap = Date.now();
+        await tapStart(sess);
+      }
+      apStatus(`recovery — game_state ${gs}, tapping START`);
+      return;
+    }
+
+    // A hidden/background tab has its timers throttled to ~1Hz and its fetches
+    // delayed, so a timed steering tap could be held ~1s and slam the bus off
+    // the road. Don't steer while hidden — just watch. On return we self-heal:
+    // if the bus drifted off and stalled meanwhile, the recovery path taps START
+    // and picks driving back up.
+    if (document.hidden) {
+      apStatus("tab hidden — steering paused (needs a foreground tab)");
+      return;
+    }
+
+    if (AP.mode === "recovery" || AP.mode === "idle") {
+      AP.mode = "driving";
+      AP.driftLimit = newDriftLimit();
+      AP.target = null;
+    }
+
+    // Once past the drift limit, lock in a target on the far side and "correct"
+    // toward it over several ticks. If we're drifting and still short of the
+    // limit, hands off and let the game's drift carry us.
+    if (AP.target === null) {
+      if (Math.abs(norm) < AP.driftLimit) {
+        apStatus(`drifting (react at ${(AP.driftLimit * 100).toFixed(0)}%, now ${(norm * 100).toFixed(0)}%)`);
+        return;
+      }
+      AP.target = -Math.sign(norm) * newTarget();
+    }
+
+    // Reached the target: resume drifting with a fresh random limit.
+    const err = AP.target - norm;
+    if (Math.abs(err) < AP_DEADZONE) {
+      AP.target = null;
+      AP.driftLimit = newDriftLimit();
+      apStatus(`settled ${(norm * 100).toFixed(0)}% — drifting (react at ${(AP.driftLimit * 100).toFixed(0)}%)`);
+      return;
+    }
+
+    // ONE short proportional tap toward the target, then release and let the
+    // main loop observe again next tick. try/finally guarantees release even if
+    // the release fetch throws, so the wheel never stays stuck held.
+    const dir = err < 0 ? "left" : "right";
+    const tapMs = Math.max(AP_TAP_MIN, Math.min(Math.abs(err) / AP_RATE, AP_TAP_MAX));
+    apStatus(`easing ${dir} → ${(AP.target * 100).toFixed(0)}% (at ${(norm * 100).toFixed(0)}%)`);
+    await sendInput({ press: [dir] }, sess);
+    try { await sleep(tapMs); } finally { await releaseOn(sess, [dir]).catch(() => {}); }
+  } catch (err) {
+    if (!isStale(err)) apStatus(`error: ${err.message || err}`);
+    await apReleaseAll(sess);
+  }
+}
+
+// gen guards against overlapping loops: if a step is still in-flight (awaiting a
+// slow peek) when the pilot is toggled off/on, the stale step's continuation is
+// tagged with an old gen and won't schedule another tick, so only one loop ever
+// runs. (Two concurrent loops would fight the wheel and slam the shoulders.)
+function apLoop(gen) {
+  if (!AP.enabled || gen !== AP.gen) return;
+  autopilotStep().finally(() => {
+    if (AP.enabled && gen === AP.gen) AP.timer = setTimeout(() => apLoop(gen), AP_TICK_MS);
+  });
+}
+
+// Stops the loop without touching the server (disconnect releases buttons itself).
+function stopAutopilot() {
+  const btn = document.getElementById("autopilotBtn");
+  const wasOn = AP.enabled;
+  AP.enabled = false;
+  AP.gen = (AP.gen || 0) + 1;
+  clearTimeout(AP.timer);
+  btn.textContent = "\u{1F68C} Autopilot: OFF";
+  btn.classList.remove("engaged");
+  if (wasOn) apStatus("off");
+  return wasOn;
+}
+
+async function toggleAutopilot() {
+  const btn = document.getElementById("autopilotBtn");
+  if (AP.enabled) {
+    const sess = AP.session;
+    stopAutopilot();
+    if (sess) await apReleaseAll(sess);
+    return;
+  }
+  if (!session) return;
+  AP.enabled = true;
+  AP.gen = (AP.gen || 0) + 1;
+  AP.session = session;
+  AP.mode = "idle";
+  btn.textContent = "\u{1F68C} Autopilot: ON";
+  btn.classList.add("engaged");
+  apLoop(AP.gen);
+}
+document.getElementById("autopilotBtn").addEventListener("click", toggleAutopilot);
+
+let tickBusy = false;
+async function tick(sess) {
+  // One tick at a time: a slow link must not queue overlapping poll loops.
+  if (tickBusy || stateOpActive || !sess?.alive) return;
+  tickBusy = true;
+  try {
+    // Speed: 0xFF6FEA, 16-bit word, range 0..0x6000 by default
+    const speedHex = await busPeek(0xFF6FEA, 2, sess);
+    const speedBytes = hexToBytes(speedHex);
+    const speed = (speedBytes[0] << 8) | speedBytes[1];
+    const speedMph = (speed / 0x6000) * 45;
+    const speedPct = Math.min(100, (speed / 0x6000) * 100);
+    document.getElementById("speedValue").innerHTML = `${speedMph.toFixed(1)}<span class="unit">mph</span>`;
+    document.getElementById("speedBar").style.width = `${speedPct}%`;
+
+    // Lateral position: $FF6FFA (steering_position). Calibrated from the game's own
+    // boundary check at $FF84F0: on-road is $2400 < x < $B400 (<= $2400 = off-road
+    // left, >= $B400 = off-road right), so center = $6C00 with a symmetric $4800
+    // half-width. 3s continuously off-road stalls the bus (game_state 1).
+    const latHex = await busPeek(0xFF6FFA, 2, sess);
+    const latBytes = hexToBytes(latHex);
+    const lat = (latBytes[0] << 8) | latBytes[1];
+    const LAT_CENTER = 0x6C00, LAT_HALF = 0x4800;
+    const latNorm = (lat - LAT_CENTER) / LAT_HALF; // -1 = left shoulder, +1 = right
+    const offRoad = lat <= 0x2400 || lat >= 0xB400;
+    const latValue = document.getElementById("latValue");
+    const side = latNorm < 0 ? "left" : "right";
+    if (offRoad) {
+      latValue.innerHTML = `OFF ROAD<span class="unit">${side}</span>`;
+    } else if (Math.abs(latNorm) < 0.01) {
+      latValue.textContent = "centered";
+    } else {
+      latValue.innerHTML = `${(Math.abs(latNorm) * 100).toFixed(0)}%<span class="unit">${side} of center</span>`;
+    }
+    // Track maps -1..+1 onto 8%..92% (the shoulder zones are the outer 8% each);
+    // clamp a little past the shoulders so off-road still renders inside the strip.
+    const latClamped = Math.max(-1.15, Math.min(1.15, latNorm));
+    const latMarker = document.getElementById("latMarker");
+    latMarker.style.left = `${50 + latClamped * 42}%`;
+    latMarker.classList.toggle("offroad", offRoad);
+    document.getElementById("latRaw").textContent =
+      `raw: 0x${lat.toString(16).toUpperCase().padStart(4, "0")} (road: 0x2400-0xB400, center 0x6C00)`;
+
+    // Time digit block: 0xFF70E4: [hour-tens (0xFF=blank), hour-ones, min-tens, min-ones]
+    // 12-hour clock: hour = (tens-byte == 0xFF ? 0 : 10) + ones-byte
+    const timeHex = await busPeek(0xFF70E4, 4, sess);
+    const t = hexToBytes(timeHex);
+    const hour = (t[0] === 0xFF ? 0 : 10) + t[1];
+    const minutes = t[2] * 10 + t[3];
+    document.getElementById("timeValue").textContent =
+      `${hour}:${String(minutes).padStart(2, "0")}`;
+
+    // Distance accumulator: 0xFF6FDC, 32-bit
+    const distHex = await busPeek(0xFF6FDC, 4, sess);
+    const d = hexToBytes(distHex);
+    const dist = (d[0] << 24) | (d[1] << 16) | (d[2] << 8) | d[3];
+    // Calibration: intercept fixed at 109.3mi (the odometer's starting value), slope
+    // fit by least squares from there over (raw, displayed-mi) samples:
+    //   (4150, 111.6), (6676, 113), (22871, 122), (648000, 469.3)
+    // The fitted slope lands almost exactly on 1/1800 -- i.e. 1 mile = 1800 internal
+    // units -- and 648000/1800 = 360 lines up exactly with the 4th sample (469.3 =
+    // 109.3 + 360). The other three points are all within 0.01mi of this line.
+    const CAL_SLOPE = 1 / 1800;  // mi/unit (≈0.00055556)
+    const CAL_INTERCEPT = 109.3; // mi
+    // The internal accumulator resets to its 109.3mi baseline at the start of every
+    // leg (confirmed: on the return leg the on-screen wheel keeps climbing past 360,
+    // but the internal raw value drops back down). So the accumulator only ever
+    // tracks "miles driven on the current leg" -- subtracting the baseline here gives
+    // that directly, not a running cumulative total matching the visible wheel.
+    const drivenMiles = CAL_SLOPE * dist; // == (CAL_INTERCEPT + CAL_SLOPE*dist) - CAL_INTERCEPT
+    document.getElementById("distValue").innerHTML = `${drivenMiles.toFixed(2)}<span class="unit">mi&asymp;</span>`;
+    document.getElementById("distRaw").textContent = `raw: ${dist}`;
+    lastDistMiles = drivenMiles;
+
+    // ETA to the next 360mi increment. drivenMiles already resets each leg along with
+    // the internal accumulator, so it IS the current leg's progress -- the modulo
+    // below is just a defensive clamp in case of any transient overshoot right at a
+    // leg boundary, not the primary mechanism.
+    const LEG_MILES = 360;
+    const legNumber = Math.floor(drivenMiles / LEG_MILES) + 1;
+    const legProgress = ((drivenMiles % LEG_MILES) + LEG_MILES) % LEG_MILES;
+    const remainingMiles = LEG_MILES - legProgress;
+    const etaValue = document.getElementById("etaValue");
+    const etaRemaining = document.getElementById("etaRemaining");
+    if (speedMph <= 0) {
+      etaValue.textContent = "stalled";
+      etaRemaining.textContent = `leg ${legNumber}: ${remainingMiles.toFixed(2)}mi to go`;
+    } else {
+      const etaHours = remainingMiles / speedMph;
+      const totalMinutes = Math.round(etaHours * 60);
+      const days = Math.floor(totalMinutes / 1440);
+      const hours = Math.floor((totalMinutes % 1440) / 60);
+      const mins = totalMinutes % 60;
+      etaValue.textContent = days > 0
+        ? `${days}d ${hours}h ${mins}m`
+        : `${hours}h ${mins}m`;
+      etaRemaining.textContent =
+        `leg ${legNumber}: ${remainingMiles.toFixed(2)}mi to go @ ${speedMph.toFixed(1)}mph`;
+    }
+
+    // Points (completed legs). The score register 0xFF7102 is TRANSIENT: the
+    // end-of-leg check ($FF83C8) increments it at arrival and the timecard's
+    // F4-F7 field prints it ($FF8BC0, clamped to one digit), but the
+    // interlude's end-sequence clear ($FF925E -- wipes $FF70F4-$FF7107)
+    // zeroes it again before driving resumes, so it reads 0 during normal
+    // play (live-traced with a write watchpoint through a full arrival).
+    // The odometer wheel digits survive instead: words at $FF70EA/$FF70EC/
+    // $FF70EE/$FF70F0/$FF70F2 (tenths/units/tens/hundreds/thousands, carried
+    // mod 10 by the wheel handler $FFB5F6 off the same per-unit distance
+    // tick) sit just below the cleared range. The wheel starts at 109.3mi
+    // and gains 360 per leg, so completed legs fall out of wheel-minus-
+    // current-leg-progress. (Wheel wraps at 10000mi = after 27 legs.)
+    const odoHex = await busPeek(0xFF70EA, 10, sess);
+    const od = hexToBytes(odoHex);
+    const odoDigit = i => (od[i * 2] << 8) | od[i * 2 + 1];
+    const odoMiles = odoDigit(4) * 1000 + odoDigit(3) * 100 + odoDigit(2) * 10 +
+                     odoDigit(1) + odoDigit(0) / 10;
+    const points = Math.max(0,
+      Math.round((odoMiles - CAL_INTERCEPT - drivenMiles) / LEG_MILES));
+    document.getElementById("pointsValue").innerHTML =
+      `${points}<span class="unit">pt${points === 1 ? "" : "s"}</span>`;
+    document.getElementById("pointsRaw").textContent =
+      `completed legs: ${points} (next: ${points % 2 === 0 ? "Tucson → Las Vegas" : "Las Vegas → Tucson"})` +
+      ` · odometer: ${odoMiles.toFixed(1)}mi`;
+
+    // Day phase: the live palette-target pointer 0xFF709C walks the Word-RAM
+    // palette ladder (0x20CB52 = full day .. 0x20CED2 = full night, ramp steps
+    // 0x80 apart; 0x20D252 = the 6:55am sunrise outlier). Mid-ramp values read
+    // as Dawn vs Dusk via the half-day parity 0xFF6FF8 (even = 1am-1pm dawn
+    // half, odd = 1pm-1am dusk half). Those parity semantics -- and the
+    // schedule the countdown is computed from (dawn ramp 5:45-7:06am, dusk
+    // 7:00-8:00pm) -- only hold with the Fix Day/Night Cycle patch applied
+    // (parity-fix NOPs live at 0xFF7AA8); the shipped scheduler misfires at
+    // effectively arbitrary times, so no countdown is shown for vanilla.
+    const pal = parseInt(await busPeek(0xFF709C, 4, sess), 16);
+    const dnParity = parseInt(await busPeek(0xFF6FF8, 2, sess), 16);
+    const parityEven = (dnParity & 1) === 0;
+    const dnFixed = (await busPeek(0xFF7AA8, 6, sess)).toLowerCase() === "4e714e714e71";
+
+    const PAL_DAY = 0x20CB52, PAL_NIGHT = 0x20CED2, PAL_SUNRISE = 0x20D252;
+    const onRamp = (pal > PAL_DAY && pal <= PAL_NIGHT) || pal === PAL_SUNRISE;
+    let phase;
+    if (pal === PAL_DAY) phase = "Day";
+    else if (pal === PAL_NIGHT) phase = "Night";
+    else if (onRamp) phase = dnFixed ? (parityEven ? "Dawn" : "Dusk") : "Twilight";
+    // 0 = pointer not yet initialized (first moments after boot / new game);
+    // the boot palette renders as day.
+    else if (pal === 0) phase = "Day";
+    else phase = "???";
+    document.getElementById("phaseValue").textContent = phase;
+
+    const phaseNext = document.getElementById("phaseNext");
+    if (dnFixed) {
+      // 24h clock from the 12h display + parity (even half = 1:00am-12:59pm,
+      // so displayed 12:xx is noon when even, midnight when odd).
+      const h24 = parityEven ? (hour === 12 ? 12 : hour) : (hour === 12 ? 0 : hour + 12);
+      const m24 = h24 * 60 + minutes;
+      // Phase boundaries, minutes since midnight: dawn ramp starts 5:45, full
+      // day 7:06, dusk ramp starts 7:00pm, full night 8:00pm.
+      const BOUNDS = [
+        { at: 5 * 60 + 45, to: "dawn" },
+        { at: 7 * 60 + 6, to: "day" },
+        { at: 19 * 60, to: "dusk" },
+        { at: 20 * 60, to: "night" }
+      ];
+      const next = BOUNDS.find(b => b.at > m24) || BOUNDS[0];
+      const wait = (next.at - m24 + 1440) % 1440;
+      const wh = Math.floor(wait / 60), wm = wait % 60;
+      phaseNext.textContent =
+        `next: ${next.to} in ${wh > 0 ? `${wh}h ` : ""}${wm}m (game time)`;
+    } else {
+      phaseNext.textContent = "next: n/a (vanilla cycle bug — apply the day/night fix)";
+    }
+    // Ladder position for the raw line: day=0 .. night=7 in 0x80 steps.
+    const rampStep = (pal - PAL_DAY) / 0x80;
+    const palDetail = pal === PAL_SUNRISE ? " (sunrise special)"
+      : pal === 0 ? " (uninit — boot default)"
+      : (onRamp ? ` (ramp ${rampStep}/7)` : "");
+    document.getElementById("phaseRaw").textContent =
+      `palette: 0x${pal.toString(16).toUpperCase().padStart(6, "0")}${palDetail}` +
+      ` · half-day: ${parityEven ? "even (1am-1pm)" : "odd (1pm-1am)"}`;
+
+    if (sess === session) setStatus(true, isPaused ? "paused" : "live");
+  } catch (err) {
+    showError(err, "disconnected");
+  } finally {
+    tickBusy = false;
+  }
+}
+
+
+async function busPoke(address, dataHex, sess = session) {
+  return api(sess, "/bus-poke", { bus: "main68k", address, data: dataHex, encoding: "hex", unsafe: true });
+}
+
+// Memory-domain peek/poke (VRAM, CRAM, ...) — used by graphics patches that
+// write tiles the CPU bus can't reach.
+async function domainPeek(domain, address, length, sess = session) {
+  const json = await api(sess, "/peek", { domain, address, length, encoding: "hex" });
+  return json.data;
+}
+
+async function domainPoke(domain, address, dataHex, sess = session) {
+  return api(sess, "/poke", { domain, address, data: dataHex, encoding: "hex" });
+}
+
+// Direct VRAM domain writes aren't reflected on screen until the VDP pattern
+// cache rebuilds; a savestate round-trip forces that. The MiSTer bridge treats
+// this reserved filename as a refresh token (no machine state is replaced).
+async function refreshVramCache(sess = session) {
+  const path = "dashboard-cache-refresh.gp0";
+  for (const ep of ["/state/save", "/state/load"]) await api(sess, ep, { path });
+}
+
+// Each patch has one or more memory "sites" (address + byte length) and a list of
+// named "states" -- each state gives the expected hex bytes for every site, in the
+// same order as `sites`. The badge shows whichever state's bytes currently match
+// live memory (or MIXED/UNKNOWN if nothing matches cleanly).
+const PATCHES = [
+  {
+    id: "steering",
+    name: "Steering Drift",
+    desc: "$FF842C: per-frame bias added to $FF6FFA (steering_position). None = " +
+          "straight (routine NOPed); Left/Right 1-3 = drift that way at 3 intensities " +
+          "($0100/$0300/$0600 per frame — Right 1 is the game's stock drift). Bounded " +
+          "both sides ($2400 left, $B800 right) so the extremes just run the bus off " +
+          "that shoulder — no crash",
+    sites: [{ address: 0xFF842C, length: 8 }],
+    states: [
+      { key: "off", label: "None",    hex: ["4e714e714e714e71"] },
+      { key: "l3",  label: "Left 3",  hex: ["0679fa0000ff6ffa"] },
+      { key: "l2",  label: "Left 2",  hex: ["0679fd0000ff6ffa"] },
+      { key: "l1",  label: "Left 1",  hex: ["0679ff0000ff6ffa"] },
+      { key: "r1",  label: "Right 1", hex: ["0679010000ff6ffa"] },
+      { key: "r2",  label: "Right 2", hex: ["0679030000ff6ffa"] },
+      { key: "r3",  label: "Right 3", hex: ["0679060000ff6ffa"] }
+    ]
+  },
+  {
+    id: "throttle",
+    name: "Full Throttle",
+    desc: "$FF8498: original conditional throttle vs. early-return write into $FF6FEA. " +
+          "Max also patches the sway-table divisor at $FFC004 ($700 → $1400) so speeds " +
+          "past $B5FF can't overrun the slot-11 pose table (the old sprite-garbage glitch); " +
+          "Original/Normal restore the stock divisor",
+    sites: [{ address: 0xFF8498, length: 10 }, { address: 0xFFC004, length: 2 }],
+    states: [
+      { key: "off", label: "Original", hex: ["0839000600ffe005673c", "0700"] },
+      { key: "normal", label: "Normal (0x6000)", hex: ["33fc600000ff6fea4e75", "0700"] },
+      { key: "max", label: "Max (0xFFFF)", hex: ["33fcffff00ff6fea4e75", "1400"] }
+    ]
+  },
+  {
+    id: "maxspeed",
+    name: "Uncap Max Speed",
+    desc: "$FF84CC / $FF84D6: raises the speed cap from $6000 to $FFFF",
+    sites: [{ address: 0xFF84CC, length: 2 }, { address: 0xFF84D6, length: 2 }],
+    states: [
+      { key: "off", label: "Remove", hex: ["6000", "6000"] },
+      { key: "on", label: "Apply", hex: ["ffff", "ffff"] }
+    ]
+  },
+  {
+    id: "fasttime",
+    name: "Accelerate Time",
+    desc: "$FF7A08: minute threshold $0E10 frames → $0001 frame (exact-match compare, " +
+          "needs $FF6FF6 reset to fire immediately)",
+    sites: [{ address: 0xFF7A08, length: 2 }],
+    states: [
+      { key: "off", label: "Remove", hex: ["0e10"] },
+      {
+        key: "on", label: "Apply", hex: ["0001"],
+        // The threshold compare at $FF7A08 is an exact match against the counter at
+        // $FF6FF6, not >=. Without resetting the counter here, it may not land on a
+        // match again for up to ~65000 frames (~18 real minutes) -- see
+        // runtime-patches.md "Required follow-up write".
+        extra: [{ address: 0xFF6FF6, hex: "0000" }]
+      }
+    ]
+  },
+  {
+    id: "busstopleft",
+    name: "Bus Stops on Left",
+    desc: "$FFBB22/$FFBB3C/$FFBB46: mirrors the bus stop sign's screen-X projection " +
+          "around the vanishing point so signs pass on the left shoulder",
+    sites: [
+      { address: 0xFFBB22, length: 6 },
+      { address: 0xFFBB3C, length: 2 },
+      { address: 0xFFBB46, length: 2 }
+    ],
+    states: [
+      { key: "off", label: "Remove", hex: ["064000684281", "9041", "d041"] },
+      { key: "on", label: "Apply", hex: ["444006400078", "d041", "9041"] }
+    ]
+  },
+  {
+    id: "busstopmile",
+    name: "Bus Stop Every Mile",
+    desc: "$FFBA54: replaces the 6-milepost table scan with `distance % 1800 == 0` — " +
+          "a stop every mile (interval tunable via the $0708 immediate at $FFBA56)",
+    sites: [{ address: 0xFFBA54, length: 18 }],
+    states: [
+      { key: "off", label: "Remove", hex: ["43f900ffba2e7205b099670651c9fffa6036"] },
+      { key: "on", label: "Apply", hex: ["80fc070848404a406708603c4e714e714e71"] }
+    ]
+  },
+  {
+    id: "daynight",
+    name: "Fix Day/Night Cycle",
+    desc: "$FF7AA8 + palette tables $FF7ABC/$FF7B6C: single AM/PM parity flip at 1:00 and " +
+          "re-encoded schedule keys — dusk 7-8pm, dawn 5:45-7:06am. When applying mid-game, " +
+          "set $FF6FF8 parity: even = clock means 1am-1pm, odd = 1pm-1am",
+    sites: [
+      { address: 0xFF7AA8, length: 6 },
+      { address: 0xFF7ABC, length: 64 },
+      { address: 0xFF7B6C, length: 56 }
+    ],
+    states: [
+      {
+        key: "off", label: "Remove",
+        hex: [
+          "527900ff6ff8",
+          "000545000020ce52000554000020cdd2000604000020cd52000614000020ccd2" +
+          "000630000020cc52000641000020cbd2000655000020d252000706000020cb52",
+          "000700000020cbd2000712000020cc52000721000020ccd2000733000020cd52" +
+          "000743000020cdd2000752000020ce52000800000020ced2"
+        ]
+      },
+      {
+        key: "on", label: "Apply",
+        hex: [
+          "4e714e714e71",
+          "000504050020ce52000505040020cdd2000600040020cd52000601040020ccd2" +
+          "000603000020cc52000604010020cbd2000605050020d252000700060020cb52",
+          "000700000020cbd2000701020020cc52000702010020ccd2000703030020cd52" +
+          "000704030020cdd2000705020020ce52000800000020ced2"
+        ]
+      }
+    ]
+  },
+  {
+    id: "bugsplat",
+    name: "Windshield Bug Splat",
+    desc: "$FF7104 trigger latch + object slot 10: Splat fires the full impact sequence " +
+          "(sound + goo at X=$A0); Remove clears the latch and parks the sprite off-screen. " +
+          "Badge shows MIXED if a splat is latched at a different X",
+    sites: [{ address: 0xFF7104, length: 2 }],
+    states: [
+      {
+        key: "off", label: "Remove",
+        hex: ["0000"],
+        extra: [
+          { address: 0xFF7106, hex: "0000" },
+          { address: 0xFF17FA, hex: "0168" }
+        ]
+      },
+      {
+        key: "on", label: "Splat!",
+        hex: ["00a0"],
+        extra: [
+          { address: 0xFF7106, hex: "0050" },
+          // Reset slot 10's sequence counter so the impact animation + sound replay;
+          // arriving a frame after the latch write is fine (it only delays the start).
+          { address: 0xFF185C, hex: "0000" }
+        ]
+      }
+    ]
+  },
+  {
+    id: "freshener",
+    name: "Air Freshener Art",
+    desc: "VDP tiles $137-$157 (VRAM $5020): swaps the swinging pine-tree air " +
+          "freshener sprite sheet. Written to the VRAM domain, then a savestate " +
+          "round-trip refreshes the pattern cache. Only visible in the driving scene",
+    // vram patches poke a memory domain (not the CPU bus) and match status by a
+    // signature tile rather than the whole 1056-byte block.
+    vram: { address: 9952, sig: { offset: 608, length: 32 } },
+    sites: [],
+    states: [
+      {
+        key: "off", label: "Stock Tree",
+        sig: "0400242402004242000024200000420240002424420042420400242400004242",
+        data: "000005000000050005005500050055550500555500005555000055050005555555055555550555555500555000005505055055555555555555055555550055550050555505555555555555555505555555000550000005000000550500005505005000000050000000550050555500505555005055550000505500005555500055555055555550550555005550550000555505505555555555555055555500555555050055555550555555555555505505500055005000005055000050550000000045000000540005004525040054540500454500005554000045052004545545054545540455544500454500005404054255455454545445054555540054540042554504545454454545555404545445004540000054000000450500005404002000000020000042420000525400004245000020540000004200002054005245450042545400524545002000520000424520055454005245550042545400002045200552542054455520455554005245250020002000000042000000520000000044000000440000004400000044440000444400004444000044044200444444004444440044440400444000004404200444444404444444004444040044442004444442044444440444444400444404000440000004000000440400004404002000000020000000200000204400002044000020440000004200002444002044440020444400204224000000420000204400004444002044440020424400002044000024440020444400204444002042240000002000000042000000420000000024000000420000002424000042420000242400004202000024040400420204002424020042420000242000004202400024244200424204002424000042424000240442004242240024240200424200002420000042000000240400004202004000000040000000440000404200004024000000440000002400004044000024240000444200004044000000440000042400004442000024240000404200000424000044420000242400004442000040440000004000000044000000440000000025000000250000002500000022020000220200002202000022020000220200002222000022220000252500002202020022520200222200002222000022220200225202002252020022220000222200002525000025000000220000002200005000000050000000500000005500000055000000550000005500000055000050250000502500005025000000550000005500005025000050250000502500000055000000550000502500005025000050250000005000000050000000500000000000000000550000005500000055000000550000004400000055000000550000005500000055000000440000005500000055000000550000004400000055000000550000005500000055000000550000004400000055000000550000005500"
+      },
+      {
+        key: "on", label: "FRESHY",
+        sig: "220f2242e60f6cf5360f6c4e620022264000b1214200c5410400712100001141",
+        data: "00000500000005000500550005005555050055550000e55e0000f5df020535222c052c6666056bffb6006bffc20025660550515555551d5555055a555500515500505555055555555555555555055555550005500000050000005505000055050050000000500000005500505555005055550050ee550000ff5500ad225250ef662c5062ff6650c6ff5600c6c65b00201111055031cc5555e198505515110055555505005555555055555555555550550550005500500000505500005055000000004500000054000500452504005454050045450000555a0f00f5ffd204342264052c426f0b6cf56f0065fbbc0054620542514554541b5445051a555400515400425545045454544545455554045454450045400000540000004505000054040020000000200000424200005254000042450000e0540000ff4d00d022c200f24264002cff6f0062ff6600606656002012c12005c13c0052917700421411000020452005525420544555204555540052452500200020000000420000005200000000440000004400000044000000444400004444000044e4ff0044ff22034c2344063f22ff062f36f50d2b6b2600446220041b4444041b4444001a440400414420044444420444444404444444004444040004400000040000004404000044040020000000200000002000002044000020440000204e0000fddf0000df2200202242002062f50020b2fe000020660000c011000014ce0020141900204211000020440000244400204444002044440020422400000020000000420000004200000000240000004200000024240000424200002424ee00ee02ff0faf04223d2d32220f2242e60f6cf5360f6c4e620022264000b1214200c541040071210000114140002404420042422400242402004242000024200000420000002404000042020040000000400000004400004042000040240000004400000024000040c400002424000044220000402400000044000004240000441200002424000040420000042400004442000024240000444200004044000000400000004400000044000000002500000025000000250000002202000022020d00220d3f00f20f3203d222b2002c22ae0e2362fe0325620600226202001251020062270000722100001221020022520200225202002222000022220000252500002500000022000000220000500000005000000050000000550000005500000055000000550000005500005025000050250000502500000055000000550000502500005025000050250000005500000055000050250000502500005025000000500000005000000050000000000000000055000000550000005500000055000d00440eff0035df3200552e6200d522660025220600242206005522000055010000150a00001401000015010000550000005500000055000000550000004400000055000000550000005500"
+      }
+    ]
+  }
+];
+
+function renderPatchList() {
+  const container = document.getElementById("patchList");
+  container.innerHTML = PATCHES.map(p => `
+    <div class="patch-row" id="patch-${p.id}">
+      <div class="patch-info">
+        <div class="patch-name">${p.name}</div>
+        <div class="patch-desc">${p.desc}</div>
+      </div>
+      <span class="badge" id="badge-${p.id}">&hellip;</span>
+      <div class="patch-buttons">
+        ${p.states.map(s => `<button class="patch-btn" data-id="${p.id}" data-state="${s.key}">${s.label}</button>`).join("")}
+      </div>
+    </div>
+  `).join("");
+
+  container.querySelectorAll(".patch-btn").forEach(btn => {
+    btn.addEventListener("click", () => setPatch(btn.dataset.id, btn.dataset.state));
+  });
+}
+
+async function refreshPatchStatus(patch, sess = session) {
+  const badge = document.getElementById(`badge-${patch.id}`);
+  try {
+    if (patch.vram) {
+      if (!feature("vram_peek")) {
+        badge.classList.remove("on", "off");
+        badge.textContent = "N/A";
+        return;
+      }
+      const live = (await domainPeek(
+        "vram", patch.vram.address + patch.vram.sig.offset, patch.vram.sig.length, sess)).toLowerCase();
+      const hit = patch.states.find(s => s.sig === live);
+      badge.classList.remove("on", "off");
+      badge.textContent = hit ? hit.label.toUpperCase() : "MIXED";
+      if (hit) badge.classList.add(hit.key === "off" ? "off" : "on");
+      return;
+    }
+    const liveHex = [];
+    for (const site of patch.sites) {
+      liveHex.push((await busPeek(site.address, site.length, sess)).toLowerCase());
+    }
+    const matched = patch.states.find(s => s.hex.every((h, i) => h === liveHex[i]));
+    badge.classList.remove("on", "off");
+    if (matched) {
+      badge.textContent = matched.label.toUpperCase();
+      badge.classList.add(matched.key === "off" || matched.key === "normal" ? "off" : "on");
+    } else {
+      badge.textContent = "MIXED";
+    }
+  } catch (err) {
+    if (isStale(err)) return;
+    badge.classList.remove("on", "off");
+    badge.textContent = "?";
+  }
+}
+
+let patchPollBusy = false;
+async function refreshAllPatchStatus(sess = session) {
+  if (patchPollBusy || stateOpActive || !sess?.alive) return;
+  patchPollBusy = true;
+  try {
+    for (const patch of PATCHES) {
+      if (!sess.alive) return;
+      await refreshPatchStatus(patch, sess);
+    }
+  } finally {
+    patchPollBusy = false;
+  }
+}
+
+// Applies every write of one patch state to the session that was active when
+// the button was clicked. Each POST is atomic on its own; a multi-site patch is
+// several POSTs, so when the server can pause, the whole click runs paused and
+// resumes only if this action did the pausing. A partial failure is reported
+// and leaves the game paused for recovery.
+async function setPatch(id, stateKey) {
+  const sess = session;
+  if (!sess) return;
+  const patch = PATCHES.find(p => p.id === id);
+  if (!patch) return;
+  const state = patch.states.find(s => s.key === stateKey);
+  if (!state) return;
+  const row = document.getElementById(`patch-${id}`);
+  const buttons = row.querySelectorAll(".patch-btn");
+  buttons.forEach(b => b.disabled = true);
+
+  const writes = patch.vram ? [] :
+    patch.sites.map((site, i) => ({ address: site.address, hex: state.hex[i] }))
+      .concat(state.extra || []);
+  let done = 0;
+  let ownPause = false;
+  try {
+    if (patch.vram) {
+      await domainPoke("vram", patch.vram.address, state.data, sess);
+      await refreshVramCache(sess);
+    } else {
+      if (writes.length > 1 && feature("pause") && !isPaused) {
+        await callAction("/pause", sess);
+        ownPause = true;
+      }
+      for (const w of writes) {
+        if (!sess.alive) throw new ApiError(0, "interrupted", "disconnected");
+        await busPoke(w.address, w.hex, sess);
+        done++;
+      }
+      if (ownPause) {
+        await callAction("/resume", sess);
+        ownPause = false;
+      }
+    }
+    await refreshPatchStatus(patch, sess);
+    if (sess === session) setStatus(true, isPaused ? "paused" : "live");
+  } catch (err) {
+    if (ownPause && done > 0 && done < writes.length && sess === session) {
+      isPaused = true;
+      setPauseButton();
+      setStatus(false, `${patch.name}: ${done} of ${writes.length} writes applied on ${sess.base} (${err.message}); game left paused`);
+    } else if (ownPause && sess.alive) {
+      await callAction("/resume", sess).catch(() => {});
+      showError(err, "patch failed");
+    } else if (done > 0 && done < writes.length) {
+      setStatus(false, `${patch.name}: only ${done} of ${writes.length} writes applied on ${sess.base} (${err.message})`);
+    } else {
+      showError(err, "patch failed");
+    }
+  } finally {
+    if (sess === session) applyCapabilities();
+  }
+}
+
+renderPatchList();
+applyCapabilities();
+
+// Server selection: ?api= overrides for this visit only; otherwise reconnect
+// to the last server the user explicitly chose. Nothing polls until connected.
+(function initConnection() {
+  const input = document.getElementById("apiInput");
+  const fromQuery = new URLSearchParams(location.search).get("api");
+  let saved = null;
+  try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) { /* storage unavailable */ }
+  if (fromQuery) {
+    connect(fromQuery, { remember: false });
+  } else if (saved) {
+    connect(saved);
+  } else {
+    input.value = DEFAULT_API;
+    setStatus(false, "not connected — choose a server and press Connect");
+  }
+})();
+</script>
+
+</body>
+</html>

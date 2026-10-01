@@ -1,0 +1,4 @@
+# built binaries: fetched with fetch-binaries.sh, not tracked in git
+sdcard/MiSTer.dashboard-control
+sdcard/_Dashboard/*.rbf
+sdcard/megacd-dashboard/megacd-dashboard
