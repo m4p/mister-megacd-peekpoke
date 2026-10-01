@@ -85,6 +85,13 @@
     overflow: hidden;
   }
   .lat-card { grid-column: 1 / -1; }
+  .value.text { font-family: "Consolas", monospace; font-size: 26px; letter-spacing: 0.08em; }
+  .events-card { grid-column: 1 / -1; }
+  .event-list { list-style: none; margin: 4px 0 0; padding: 0; font-family: "Consolas", monospace; font-size: 13px; }
+  .event-list li { padding: 4px 0; border-bottom: 1px solid #1d242c; color: var(--muted); }
+  .event-list li .ev-name { color: var(--accent); font-weight: 700; margin: 0 8px; }
+  .event-list li.fresh { background: rgba(63,185,80,0.12); }
+  .event-list li.bad .ev-name { color: var(--danger); }
   .lat-card .value { font-size: 24px; }
   .lat-track {
     position: relative;
@@ -382,6 +389,24 @@
     <div class="subvalue" id="phaseRaw">palette: --</div>
   </div>
 
+  <div class="card goal-card">
+    <h2>Next Bus Stop</h2>
+    <div class="value" id="stopValue">--</div>
+    <div class="subvalue" id="stopEta">ETA: --</div>
+    <div class="subvalue" id="stopRaw">stops: --</div>
+  </div>
+
+  <div class="card">
+    <h2>Driver</h2>
+    <div class="value text" id="driverValue">--</div>
+    <div class="subvalue" id="driverRaw">name entered at the timecard</div>
+  </div>
+
+  <div class="card events-card">
+    <h2>Events</h2>
+    <ul class="event-list" id="eventList"><li>connect through the dashboard hub to see events</li></ul>
+  </div>
+
   <div class="card lat-card">
     <h2>Lateral Position</h2>
     <div class="value" id="latValue">--</div>
@@ -546,7 +571,8 @@ async function probeCapabilities(sess) {
       const s = await api(sess, "/status", undefined, { method: "GET" });
       paused = !!s.paused;
     } catch (e) { if (isStale(e)) throw e; }
-    return { kind: "mister", name: c.target || c.server, build: c.core?.build_id, features: c.features || {}, paused };
+    return { kind: "mister", name: c.target || c.server, build: c.core?.build_id, features: c.features || {}, paused,
+             hub: !!c.hub };
   } catch (e) {
     if (isStale(e) || e.code === "network" || e.code === "timeout" || e.status >= 500 || e.code === "core_unavailable") throw e;
     await busPeek(0xFF7002, 2, sess);   // legacy server: prove it answers the contract
@@ -564,6 +590,73 @@ function startPolling(sess) {
   refreshAllPatchStatus(sess);
   pollTimers.push(setInterval(() => tick(sess), 500));
   pollTimers.push(setInterval(() => refreshAllPatchStatus(sess), 500));
+  resetEvents(sess);
+  if (sess.caps?.hub) {
+    pollEvents(sess);
+    pollTimers.push(setInterval(() => pollEvents(sess), 1000));
+  }
+}
+
+// ---- game events (served by the dashboard hub's /hub/events) ----
+const EVENT_LABELS = {
+  bug_splat: "\u{1FAB0} bug splat", crash: "\u{1F4A5} crash", point: "\u{1F3C1} point scored",
+  bus_stop: "\u{1F68F} bus stop served", bus_stop_missed: "\u{1F68F} bus stop missed"
+};
+let eventsLastId = 0, eventsLoaded = false, eventsBusy = false;
+const eventItems = [];
+function resetEvents(sess) {
+  eventsLastId = 0; eventsLoaded = false; eventItems.length = 0;
+  const ul = document.getElementById("eventList");
+  ul.innerHTML = "";
+  const li = document.createElement("li");
+  li.textContent = sess.caps?.hub ? "no events yet" : "connect through the dashboard hub to see events";
+  ul.append(li);
+}
+function describeEvent(e) {
+  const d = e.details || {};
+  switch (e.event) {
+    case "bus_stop": return `stopped ${d.stopped_s}s at mile ${d.leg_miles}`;
+    case "bus_stop_missed": return `passed the stop at mile ${d.leg_miles}`;
+    case "crash": return `${d.cause || "off the road"} at mile ${d.leg_miles}`;
+    case "point": return `${d.points} point${d.points === 1 ? "" : "s"} (${d.leg} leg done)`;
+    case "bug_splat": return `at mile ${d.leg_miles}`;
+    default: return JSON.stringify(d);
+  }
+}
+function renderEvents() {
+  const ul = document.getElementById("eventList");
+  if (!eventItems.length) return;
+  ul.innerHTML = "";
+  for (const e of eventItems.slice(-10).reverse()) {
+    const li = document.createElement("li");
+    if (e.fresh && Date.now() - e.fresh < 8000) li.classList.add("fresh");
+    if (e.event === "crash" || e.event === "bus_stop_missed") li.classList.add("bad");
+    const time = new Date(e.unix * 1000).toLocaleTimeString();
+    const name = document.createElement("span");
+    name.className = "ev-name";
+    name.textContent = EVENT_LABELS[e.event] || e.event;
+    li.append(time, name, describeEvent(e));
+    ul.append(li);
+  }
+}
+async function pollEvents(sess) {
+  if (eventsBusy || !sess?.alive) return;
+  eventsBusy = true;
+  try {
+    const j = await api(sess, `/hub/events?since=${eventsLastId}`, undefined, { method: "GET" });
+    for (const e of j.events || []) {
+      if (eventsLoaded) e.fresh = Date.now();
+      eventItems.push(e);
+    }
+    if (eventItems.length > 100) eventItems.splice(0, eventItems.length - 100);
+    eventsLastId = j.last_id ?? eventsLastId;
+    eventsLoaded = true;
+    renderEvents();
+  } catch (e) {
+    /* events are optional; telemetry errors are shown by tick() */
+  } finally {
+    eventsBusy = false;
+  }
 }
 
 function setPauseButton() {
@@ -1101,6 +1194,62 @@ async function tick(sess) {
     document.getElementById("phaseRaw").textContent =
       `palette: 0x${pal.toString(16).toUpperCase().padStart(6, "0")}${palDetail}` +
       ` · half-day: ${parityEven ? "even (1am-1pm)" : "odd (1pm-1am)"}`;
+
+    // Next bus stop. The game spawns the roadside sign when the distance accumulator
+    // equals one of six table entries at $FFBA2E (exact match, same table both legs);
+    // the "Bus Stop Every Mile" patch replaces the scan at $FFBA54 with
+    // divu.w #n (80FC nnnn): a stop whenever distance % n == 0. The sign object
+    // ($FF15FA, flags +7: $20 active, $10 visible; progress at $FF164E) is beside the
+    // road while progress is ~30..75 on the outbound leg.
+    const stopTable = hexToBytes(await busPeek(0xFFBA2E, 24, sess));
+    const stopCode = hexToBytes(await busPeek(0xFFBA54, 4, sess));
+    const stopFlags = hexToBytes(await busPeek(0xFF15FA, 8, sess))[7];
+    const stopProg = parseInt(await busPeek(0xFF164E, 2, sess), 16);
+    const LEG_END = 648000;
+    let nextStop = null, stopMode, stopIndex = -1;
+    if (stopCode[0] === 0x80 && stopCode[1] === 0xFC) {
+      const n = (stopCode[2] << 8) | stopCode[3];
+      nextStop = n ? (Math.floor(dist / n) + 1) * n : null;
+      stopMode = `every ${+(n / 1800).toFixed(2)} mi (patched)`;
+    } else {
+      const stops = [];
+      for (let i = 0; i < 6; i++) {
+        stops.push(stopTable[i * 4] * 0x1000000 + (stopTable[i * 4 + 1] << 16) + (stopTable[i * 4 + 2] << 8) + stopTable[i * 4 + 3]);
+      }
+      stops.sort((a, b) => a - b);
+      stopIndex = stops.findIndex(v => v > dist);
+      nextStop = stopIndex >= 0 ? stops[stopIndex] : null;
+      stopMode = `6 per leg at ${stops.map(v => (v / 1800).toFixed(1)).join(", ")} mi`;
+    }
+    if (nextStop !== null && nextStop >= LEG_END) nextStop = null;
+    const stopValue = document.getElementById("stopValue");
+    const stopEta = document.getElementById("stopEta");
+    const signActive = (stopFlags & 0x20) !== 0, signVisible = (stopFlags & 0x10) !== 0;
+    if (signActive && signVisible && stopProg >= 30 && stopProg <= 75) {
+      stopValue.textContent = "at the stop";
+      stopEta.textContent = speedMph <= 0 ? "stopped at the bus stop" : "sign beside the road: stop now";
+    } else if (nextStop === null) {
+      stopValue.textContent = "none";
+      stopEta.textContent = "no more stops this leg";
+    } else {
+      const miles = (nextStop - dist) / 1800;
+      stopValue.innerHTML = `${miles.toFixed(2)}<span class="unit">mi</span>`;
+      if (speedMph <= 0) {
+        stopEta.textContent = "ETA: stalled";
+      } else {
+        const secs = Math.round(miles / speedMph * 3600);
+        const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60), sec = secs % 60;
+        stopEta.textContent = `ETA: ${h ? `${h}h ` : ""}${h || m ? `${m}m ` : ""}${sec}s @ ${speedMph.toFixed(1)}mph`;
+      }
+    }
+    document.getElementById("stopRaw").textContent =
+      (stopIndex >= 0 && nextStop !== null ? `stop ${stopIndex + 1} of 6 · ` : "") + stopMode;
+
+    // Driver name: 8 bytes at $FF7108, A=1..Z=26, 0 = blank (default "JOCKO",
+    // written by the new-game init at $FFA140; the timecard shows it).
+    const nameBytes = hexToBytes(await busPeek(0xFF7108, 8, sess));
+    const driver = nameBytes.map(b => (b >= 1 && b <= 26 ? String.fromCharCode(0x40 + b) : " ")).join("").trim();
+    document.getElementById("driverValue").textContent = driver || "--";
 
     if (sess === session) setStatus(true, isPaused ? "paused" : "live");
   } catch (err) {
