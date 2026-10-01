@@ -67,7 +67,21 @@ TELEMETRY = {
     "clock": (0xFF70E4, 4),
     "odometer": (0xFF70EA, 10),
     "daynight_fix": (0xFF7AA8, 6),
+    "direction": (0xFF6FE4, 2),        # 0 = outbound leg, else return leg
+    "splat_latch": (0xFF7104, 4),      # bug splat trigger latch (X, Y)
+    "splat_slot": (0xFF17F8, 4),       # object slot 10: sprite id, X
+    "stop_slot": (0xFF15FA, 8),        # bus stop sign object: id, x, y, flags (0x20 active, 0x10 visible)
+    "stop_progress": (0xFF164E, 2),    # bus stop sign approach progress (6..140)
 }
+# Read every --slow-interval: they change rarely (patches, name entry)
+SLOW_TELEMETRY = {
+    "stop_table": (0xFFBA2E, 24),      # six 32-bit bus stop distances
+    "stop_code": (0xFFBA54, 4),        # 80FC nnnn = "Bus Stop Every Mile" patch (stop every nnnn units)
+    "driver_name": (0xFF7108, 8),      # A = 1 ... Z = 26, 0 = blank
+}
+UNITS_PER_MILE = 1800
+LEG_END = 0x9E340                      # 648000 units = 360 miles
+FRAME_RATE = 60
 READ_ONLY = {"/bus-peek", "/peek", "/status", "/capabilities"}
 CONTROL = {"/input", "/pause", "/resume"}
 
@@ -284,14 +298,21 @@ class Cache:
         with self.lock:
             if generation is not None and generation != self.gens[space]:
                 return    # read raced with a write: drop it
-            self.blocks[space][start] = (bytes(data), now())
+            blocks, end = self.blocks[space], start + len(data)
+            # a new read supersedes older blocks it covers, so no stale copy lingers
+            for st in [st for st, (d, _) in blocks.items() if start <= st and st + len(d) <= end]:
+                del blocks[st]
+            blocks[start] = (bytes(data), now())
 
     def get(self, space, addr, length, max_age):
-        t_now = now()
+        """The freshest cached copy of the range, if it is at most max_age old."""
+        t_now, best = now(), None
         with self.lock:
             for start, (data, t) in self.blocks[space].items():
-                if start <= addr and addr + length <= start + len(data) and t_now - t <= max_age:
-                    return data[addr - start:addr - start + length]
+                if start <= addr and addr + length <= start + len(data) and (best is None or t > best[1]):
+                    best = (data[addr - start:addr - start + length], t)
+        if best and t_now - best[1] <= max_age:
+            return best[0]
         return None
 
     def read(self, space, addr, length):
@@ -351,9 +372,28 @@ def u(b):
     return int.from_bytes(b, "big")
 
 
+def driver_name(b):
+    return "".join(chr(0x40 + x) if 1 <= x <= 26 else " " for x in b).strip()
+
+
+def next_bus_stop(dist, table, code):
+    """Distance (units) of the next bus stop on this leg, and how stops are scheduled."""
+    if code[:2] == b"\x80\xfc":                  # divu.w #n,d0: a stop every n units
+        n = u(code[2:4])
+        nxt = (dist // n + 1) * n if n else None
+        mode = f"every {n / UNITS_PER_MILE:g} mi" if n else "every ? mi"
+    else:
+        stops = sorted(u(table[i * 4:i * 4 + 4]) for i in range(6))
+        nxt = next((st for st in stops if st > dist), None)
+        mode = "table"
+    if nxt is not None and nxt >= LEG_END:
+        nxt = None
+    return nxt, mode
+
+
 def decode_telemetry(c):
     """Decode the telemetry block like dashboard.html does. Returns a dict or None."""
-    raw = {k: c.read("bus", a, n) for k, (a, n) in TELEMETRY.items()}
+    raw = {k: c.read("bus", a, n) for k, (a, n) in {**TELEMETRY, **SLOW_TELEMETRY}.items()}
     if any(v is None for v in raw.values()):
         return None
     speed, lat, dist = u(raw["speed"]), u(raw["lateral"]), u(raw["distance"])
@@ -376,6 +416,10 @@ def decode_telemetry(c):
     else:
         phase = "unknown"
     gs = u(raw["game_state"])
+    units_per_s = speed * FRAME_RATE / 65536
+    nxt, stop_mode = next_bus_stop(dist, raw["stop_table"], raw["stop_code"])
+    stop_flags = raw["stop_slot"][7]
+    splat_id, splat_x = u(raw["splat_slot"][0:2]), u(raw["splat_slot"][2:4])
     return {
         # outside Desert Bus (BIOS, game menu, other title) work RAM holds other data
         "in_game": gs < 0x20 and pal in (0, sunrise) or (gs < 0x20 and day <= pal <= night),
@@ -388,6 +432,16 @@ def decode_telemetry(c):
         "odometer_miles": round(odo, 1),
         "points": max(0, round((odo - 109.3 - leg_miles) / 360)),
         "palette": pal, "daynight_parity": parity, "daynight_fixed": fixed, "phase": phase,
+        "return_leg": u(raw["direction"]) != 0,
+        "driver_name": driver_name(raw["driver_name"]),
+        "next_stop_raw": nxt,
+        "next_stop_miles": None if nxt is None else round((nxt - dist) / UNITS_PER_MILE, 3),
+        "next_stop_eta_s": None if nxt is None or units_per_s <= 0 else round((nxt - dist) / units_per_s),
+        "stop_mode": stop_mode,
+        "stop_active": bool(stop_flags & 0x20), "stop_visible": bool(stop_flags & 0x10),
+        "stop_progress": u(raw["stop_progress"]),
+        "splat_visible": u(raw["splat_latch"][0:2]) != 0 and splat_id in (0x48, 0x49) and splat_x < 0x140,
+        "splat_x": splat_x,
     }
 
 
@@ -402,12 +456,15 @@ class Poller:
         self.last_demand = {"bus": 0.0, "vram": 0.0}
         self.thread = threading.Thread(target=self._run, name="poller", daemon=True)
         self.hot = plan_reads(list(TELEMETRY.values()), BUS_MAX)
+        self.slow = plan_reads(list(SLOW_TELEMETRY.values()), BUS_MAX)
+        self.last_slow = 0.0
+        self.events = None             # EventLog, set by main()
 
     def start(self):
         self.thread.start()
 
     def is_hot(self, space, addr, length):
-        return space == "bus" and any(s <= addr and addr + length <= s + n for s, n in self.hot)
+        return space == "bus" and any(s <= addr and addr + length <= s + n for s, n in self.hot + self.slow)
 
     def want(self, space, addr, length):
         if self.is_hot(space, addr, length):
@@ -449,6 +506,10 @@ class Poller:
         for addr, length in self.hot:
             self._read("bus", addr, length)
         t = now()
+        if t - self.last_slow >= self.args.slow_interval:
+            self.last_slow = t
+            for addr, length in self.slow:
+                self._read("bus", addr, length)
         for space, interval, max_len in (("bus", self.args.demand_interval, BUS_MAX),
                                          ("vram", self.args.vram_interval, VRAM_MAX)):
             if t - self.last_demand[space] >= interval:
@@ -458,6 +519,8 @@ class Poller:
         tel = decode_telemetry(self.cache)
         if tel:
             self.telemetry = (tel, time.time())
+            if self.events:
+                self.events.detector.update(tel)
 
     def _run(self):
         while not self.stop.is_set():
@@ -470,6 +533,167 @@ class Poller:
                 except Exception:  # noqa: BLE001
                     log.exception("poll cycle failed")
             self.stop.wait(max(0.02, self.args.interval - (now() - t0)))
+
+
+# --------------------------------------------------------------------------- events
+
+EVENTS = ("bug_splat", "crash", "point", "bus_stop", "bus_stop_missed")
+
+
+class EventDetector:
+    """Turns successive telemetry samples into game events.
+
+    bug_splat        the windshield splat appears (slot 10 shows sprite 0x48/0x49 on screen)
+    crash            driving (state 3) ends in an off-road stall (state 1 or 2), or in a tow
+                     (state 4) after standing still for ~30 s ($FF8590: stall timer $FF6FFC)
+    point            the distance reaches the end of the leg (360 mi): a point is scored
+    bus_stop         the bus stops (speed 0) while a bus stop sign is beside the road, then
+                     drives off again; fires on the drive-off, never if the bus crashes there
+    bus_stop_missed  a bus stop sign passes without the bus stopping at it
+    """
+    STOPPED = 0x80        # speed_raw below this counts as standing still (~0.2 mph)
+    MOVING = 0x400        # and above this as driving off again (~1.9 mph)
+
+    def __init__(self, emit, args):
+        self.emit, self.args = emit, args
+        self.reset()
+
+    def reset(self):
+        self.prev = None
+        self.stop = None      # {"stopped_at": t or None, "mile": .., "eligible": bool}
+
+    def _near_stop(self, tel):
+        if not (tel["stop_active"] and tel["stop_visible"]):
+            return False
+        p = tel["stop_progress"]
+        if tel["return_leg"]:
+            return True       # return-leg geometry not verified: any visible pass counts
+        return self.args.stop_min_progress <= p <= self.args.stop_max_progress
+
+    def update(self, tel):
+        prev, self.prev = self.prev, tel
+        if not tel["in_game"]:
+            self.stop = None
+            return
+        if prev is None or not prev["in_game"]:
+            return
+        gs, pgs = tel["game_state"], prev["game_state"]
+        mile = round(tel["leg_miles"], 2)
+        if pgs == 3 and gs in (1, 2, 4):
+            self.emit("crash", {"leg_miles": mile, "lateral_raw": tel["lateral_raw"], "state": gs,
+                                "cause": "stood still too long" if gs == 4 else "off the road"})
+        if prev["distance_raw"] < LEG_END <= tel["distance_raw"] < 0x80000000:
+            self.emit("point", {"points": tel["points"] + 1, "odometer_miles": tel["odometer_miles"],
+                                "leg": "return" if tel["return_leg"] else "outbound"})
+        # the splat only counts while driving: leg transitions park and restore the sprite
+        if gs == 3 and pgs == 3 and tel["splat_visible"] and not prev["splat_visible"]:
+            self.emit("bug_splat", {"x": tel["splat_x"], "leg_miles": mile})
+        self._bus_stop(tel, gs, mile)
+
+    def _bus_stop(self, tel, gs, mile):
+        t = time.time()
+        if not tel["stop_active"]:
+            if self.stop is not None and self.stop["stopped_at"] is None and gs == 3:
+                self.emit("bus_stop_missed", {"leg_miles": self.stop["mile"]})
+            self.stop = None
+            return
+        if self.stop is None:
+            self.stop = {"stopped_at": None, "mile": mile, "done": False}
+        st = self.stop
+        if gs in (1, 2, 4, 5) and st["stopped_at"] is not None and not st["done"]:
+            st["done"] = True     # crashed after stopping: the bus never drove off, no event
+            log.info("bus stop cancelled: crash at the stop (state %d)", gs)
+        if gs != 3 or st["done"]:
+            return
+        if st["stopped_at"] is None:
+            if tel["speed_raw"] < self.STOPPED and self._near_stop(tel):
+                st["stopped_at"] = t
+                log.info("bus stopped at the bus stop (mile %.2f, progress %d)", mile, tel["stop_progress"])
+        elif tel["speed_raw"] > self.MOVING:
+            st["done"] = True
+            self.emit("bus_stop", {"leg_miles": st["mile"], "stopped_s": round(t - st["stopped_at"], 1)})
+
+
+class EventLog:
+    """Recent events for /hub/events, plus delivery to webhooks and InfluxDB."""
+
+    def __init__(self, args, poller, webhooks, influx_ref):
+        self.lock = threading.Lock()
+        self.items = collections.deque(maxlen=500)
+        self.next_id = 1
+        self.args, self.poller, self.webhooks, self.influx_ref = args, poller, webhooks, influx_ref
+        self.detector = EventDetector(self.emit, args)
+
+    def emit(self, name, details):
+        t = time.time()
+        tel = (self.poller.telemetry or ({}, 0))[0]
+        with self.lock:
+            ev = {"id": self.next_id, "event": name, "unix": round(t, 3),
+                  "time": time.strftime("%Y-%m-%dT%H:%M:%S%z", time.localtime(t)), "details": details,
+                  "telemetry": {k: tel.get(k) for k in ("leg_miles", "odometer_miles", "points", "speed_mph",
+                                                         "clock_hour", "clock_minute", "driver_name", "return_leg")}}
+            self.next_id += 1
+            self.items.append(ev)
+        log.info("event %s %s", name, json.dumps(details))
+        self.webhooks.send(ev)
+        influx = self.influx_ref()
+        if influx:
+            influx.add(line("desertbus_event", {"host": self.args.influx_tag_host or self.poller.up.host, "event": name},
+                            {"count": 1, "details": json.dumps(details)}, int(t * 1e9)))
+
+    def since(self, last_id):
+        with self.lock:
+            return [e for e in self.items if e["id"] > last_id], self.next_id - 1
+
+
+class Webhooks:
+    """POSTs each event as JSON to the URLs configured for it, in the background, with retries."""
+
+    def __init__(self, specs, headers, timeout, retries):
+        self.routes = []                       # (event or "*", url)
+        for spec in specs:
+            name, sep, url = spec.partition("=")
+            if not sep or not url.startswith(("http://", "https://")) or (name != "*" and name not in EVENTS):
+                raise SystemExit(f"--webhook {spec!r}: expected EVENT=URL with EVENT one of {', '.join(EVENTS)} or *")
+            self.routes.append((name, url))
+        self.headers = {"Content-Type": "application/json", "User-Agent": f"dashboard-hub/{VERSION}"}
+        for h in headers:
+            k, sep, v = h.partition(":")
+            if not sep:
+                raise SystemExit(f"--webhook-header {h!r}: expected 'Name: value'")
+            self.headers[k.strip()] = v.strip()
+        self.timeout, self.retries = timeout, retries
+        self.q = queue.Queue(maxsize=1000)
+        self.stats = collections.Counter()
+        if self.routes:
+            threading.Thread(target=self._run, name="webhooks", daemon=True).start()
+
+    def send(self, ev):
+        for name, url in self.routes:
+            if name in ("*", ev["event"]):
+                try:
+                    self.q.put_nowait((url, ev))
+                except queue.Full:
+                    self.stats["dropped"] += 1
+
+    def _run(self):
+        while True:
+            url, ev = self.q.get()
+            body = json.dumps(ev).encode()
+            for attempt in range(self.retries + 1):
+                try:
+                    req = urllib.request.Request(url, data=body, headers=self.headers, method="POST")
+                    with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                        r.read()
+                    self.stats["delivered"] += 1
+                    log.info("webhook %s -> %s OK", ev["event"], url)
+                    break
+                except (OSError, ValueError) as e:
+                    if attempt == self.retries:
+                        self.stats["failed"] += 1
+                        log.warning("webhook %s -> %s failed: %s", ev["event"], url, e)
+                    else:
+                        time.sleep(min(2 ** attempt, 30))
 
 
 # --------------------------------------------------------------------------- influx
@@ -695,6 +919,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send(200, f.read(), "text/html; charset=utf-8")
         if path == "/hub":
             return self._json(200, self._hub_status())
+        if path == "/hub/events":
+            q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
+            try:
+                since = int((q.get("since") or ["0"])[0])
+            except ValueError:
+                since = 0
+            items, last = s.poller.events.since(since)
+            return self._json(200, {"ok": True, "events": items, "last_id": last, "types": list(EVENTS)})
         if path == "/hub/telemetry":
             tel = s.poller.telemetry
             return self._json(200, {"ok": tel is not None, "time": tel and tel[1], "telemetry": tel and tel[0]})
@@ -782,7 +1014,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _forward(self, method, path, body, prio):
         s = self.server
-        write = path not in READ_ONLY
+        write = method == "POST" and path not in READ_ONLY
         # writes from different dashboards go upstream one at a time, and the cache is
         # invalidated before and after so no reader sees a value from before the write
         lock = s.write_lock if write else None
@@ -860,6 +1092,15 @@ def main():
     g.add_argument("--influx-flush", type=float, default=2.0, help="seconds between writes (default 2)")
     g.add_argument("--influx-buffer", type=int, default=200000, help="points kept while InfluxDB is down (default 200000)")
     g.add_argument("--influx-tag-host", help="value of the host tag (default: MiSTer host name)")
+    ap.add_argument("--slow-interval", type=float, default=2.0, help="poll interval for bus stop table, patches, driver name (default 2)")
+    e = ap.add_argument_group("events and webhooks")
+    e.add_argument("--webhook", action="append", default=[], metavar="EVENT=URL",
+                   help=f"POST events as JSON to URL; EVENT is one of {', '.join(EVENTS)} or * (repeatable)")
+    e.add_argument("--webhook-header", action="append", default=[], metavar="'NAME: VALUE'", help="extra HTTP header for webhooks (repeatable)")
+    e.add_argument("--webhook-timeout", type=float, default=5.0, help="webhook request timeout in s (default 5)")
+    e.add_argument("--webhook-retries", type=int, default=3, help="retries per webhook delivery (default 3)")
+    e.add_argument("--stop-min-progress", type=int, default=30, help="bus stop window start, sign progress (default 30)")
+    e.add_argument("--stop-max-progress", type=int, default=75, help="bus stop window end, sign progress (default 75)")
     ap.add_argument("--log-file", help="also log to this file (rotated at 5 MB)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
@@ -882,6 +1123,8 @@ def main():
     poller = Poller(up, cache, args)
 
     def connected(epoch_changed):
+        if poller.events:
+            poller.events.detector.reset()
         if epoch_changed:
             cache.clear()
         else:
@@ -898,6 +1141,8 @@ def main():
     host, _, port = args.listen.rpartition(":")
     server = Hub((host or "0.0.0.0", int(port)), up, cache, poller, args)
     server.influx = Influx(args) if args.influx_url else None
+    webhooks = Webhooks(args.webhook, args.webhook_header, args.webhook_timeout, args.webhook_retries)
+    poller.events = EventLog(args, poller, webhooks, lambda: server.influx)
 
     stop = threading.Event()
     up.start()

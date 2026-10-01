@@ -50,9 +50,48 @@ InfluxDB 1.x: `--influx-url http://localhost:8086 --influx-db desertbus [--influ
 ## Endpoints added by the hub
 
 - `GET /hub`: connection state, upstream latency, request counts, cache hits, InfluxDB state.
-- `GET /hub/telemetry`: the latest decoded telemetry as JSON.
+- `GET /hub/telemetry`: the latest decoded telemetry as JSON (including next bus stop and driver).
+- `GET /hub/events?since=ID`: game events newer than `ID` (the last 500 are kept), plus `last_id`.
 - `GET /` (with `--dashboard`): the dashboard page.
 - `/capabilities` gains a `"hub"` object; everything else is the bridge's API.
+
+## Game events and webhooks
+
+The hub detects these events from the polled memory (each one verified live on the MiSTer
+unless noted):
+
+| Event | Fires when | Details |
+|---|---|---|
+| `bus_stop` | the bus stops (speed 0) while the bus stop sign is beside the road (sign progress `--stop-min-progress`..`--stop-max-progress`, 30..75), then **drives off again**. Never fires if the bus crashes or is towed while standing there. | `leg_miles`, `stopped_s` |
+| `bus_stop_missed` | a bus stop sign passes without such a stop | `leg_miles` |
+| `crash` | driving (state 3) ends in an off-road stall (state 1/2; unit-tested) or in a tow after standing still ~30 s (state 4; the game's stall timer `$FF6FFC`) | `leg_miles`, `state`, `cause` |
+| `point` | the distance reaches the end of the leg (648000 units = 360 mi) | `points`, `odometer_miles`, `leg` |
+| `bug_splat` | the windshield splat appears while driving | `x`, `leg_miles` |
+
+Webhooks POST each event as JSON:
+
+```bash
+python3 dashboard_hub.py --mister http://mister.lan:8765 \
+    --webhook "bus_stop=http://homeassistant.lan:8123/api/webhook/desertbus-stop" \
+    --webhook "*=http://localhost:9000/all-events" \
+    --webhook-header "Authorization: Bearer secret"
+```
+
+`--webhook EVENT=URL` is repeatable; `*` matches every event. Delivery runs in the background
+with `--webhook-retries` (3, backoff 1-2-4 s) and `--webhook-timeout` (5 s). Payload:
+
+```json
+{"id": 2, "event": "bus_stop", "unix": 1790848148.933, "time": "2026-10-01T11:49:08+0200",
+ "details": {"leg_miles": 0.89, "stopped_s": 12.0},
+ "telemetry": {"leg_miles": 0.95, "odometer_miles": 110.0, "points": 0, "speed_mph": 3.1,
+               "clock_hour": 7, "clock_minute": 41, "driver_name": "JOCKO", "return_leg": false}}
+```
+
+Events also go to InfluxDB (measurement `desertbus_event`, tag `event`) and to the
+dashboard's Events card when it is connected through the hub.
+
+Bus stop geometry on the return leg is not verified: there any stop while the sign is
+visible counts.
 
 ## InfluxDB schema
 
@@ -69,6 +108,11 @@ Measurement **`desertbus`** (every `--influx-interval`, 1 s), tag `host`:
 | `odometer_miles`, `points` | odometer wheel; completed legs |
 | `palette`, `daynight_parity`, `daynight_fixed`, `phase` | day/night state (`day`, `night`, `dawn`, `dusk`, `twilight`) |
 | `paused`, `frame`, `held` | from the bridge's `/status` |
+| `return_leg` | `$FF6FE4` != 0 |
+| `driver_name` | `$FF7108`, 8 letters, A = 1 (default JOCKO) |
+| `next_stop_raw`, `next_stop_miles`, `next_stop_eta_s`, `stop_mode` | next bus stop from the six-entry table at `$FFBA2E`, or every N units when the "Bus Stop Every Mile" patch (`80FC nnnn` at `$FFBA54`) is applied; ETA at the current speed |
+| `stop_active`, `stop_visible`, `stop_progress` | the bus stop sign object (`$FF15FA`, progress `$FF164E`) |
+| `splat_visible`, `splat_x` | bug splat latch `$FF7104` and object slot 10 |
 
 Measurement **`dashboard_hub`**: `connected`, `core_present`, `upstream_rps`,
 `upstream_latency_ms_p50`, `upstream_latency_ms_max`, `disconnects`, `clients`,

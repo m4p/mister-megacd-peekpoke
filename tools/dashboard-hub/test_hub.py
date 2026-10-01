@@ -21,6 +21,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 BRIDGE_PORT, HUB_PORT, INFLUX_PORT = 18765, 18766, 18086
 influx_lines = []
+hooks = []
+HOOK_PORT = 18090
 failures = []
 
 
@@ -37,6 +39,17 @@ class FakeInflux(http.server.BaseHTTPRequestHandler):
         FakeInflux.last_auth = self.headers.get("Authorization")
         FakeInflux.last_path = self.path
         self.send_response(204)
+        self.end_headers()
+
+    def log_message(self, *a):
+        pass
+
+
+class FakeHook(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):  # noqa: N802
+        hooks.append((self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+        self.send_response(200)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def log_message(self, *a):
@@ -83,13 +96,17 @@ def main():
 
     influx = http.server.ThreadingHTTPServer(("127.0.0.1", INFLUX_PORT), FakeInflux)
     threading.Thread(target=influx.serve_forever, daemon=True).start()
+    hookd = http.server.ThreadingHTTPServer(("127.0.0.1", HOOK_PORT), FakeHook)
+    threading.Thread(target=hookd.serve_forever, daemon=True).start()
     bridge = start_bridge()
     hub_log = open(f"{tmp}/hub.log", "w")
     hubp = subprocess.Popen([sys.executable, os.path.join(HERE, "dashboard_hub.py"),
                              "--mister", f"http://127.0.0.1:{BRIDGE_PORT}", "--listen", f"127.0.0.1:{HUB_PORT}",
                              "--interval", "0.1", "--influx-url", f"http://127.0.0.1:{INFLUX_PORT}",
                              "--influx-org", "home", "--influx-bucket", "desertbus", "--influx-token", "secret",
-                             "--influx-interval", "0.2", "--influx-flush", "0.3"],
+                             "--influx-interval", "0.2", "--influx-flush", "0.3",
+                             "--webhook", f"crash=http://127.0.0.1:{HOOK_PORT}/crash",
+                             "--webhook", f"*=http://127.0.0.1:{HOOK_PORT}/all"],
                             stdout=hub_log, stderr=subprocess.STDOUT)
     try:
         check(wait_for(lambda: hub("GET", "/hub")[1]["upstream"]["connected"]), "hub connects to the bridge")
@@ -135,6 +152,25 @@ def main():
         hub("POST", "/input", {"release": ["left"]})
         check("left" not in hub("GET", "/status")[1].get("held", []), "release is visible in /status")
 
+        # events: driving, then an off-road stall -> crash event, webhooks, /hub/events
+        def poke(addr, hexdata):
+            return hub("POST", "/bus-poke", {"bus": "main68k", "address": addr, "data": hexdata, "encoding": "hex", "unsafe": True})
+        poke(0xFF7108, "0a0f030b0f000000")
+        poke(0xFF7002, "0003")
+        time.sleep(2.5)                       # driving samples, slow reads (name) done
+        poke(0xFF7002, "0001")
+        check(wait_for(lambda: len(hooks) >= 2, 5), "crash webhook delivered to both routes")
+        paths = sorted(p for p, _ in hooks)
+        check(paths == ["/all", "/crash"] and hooks[0][1]["event"] == "crash", f"webhook routes and payload ({paths})")
+        st, ev = hub("GET", "/hub/events?since=0")
+        check(st == 200 and [e["event"] for e in ev["events"]] == ["crash"], "crash listed in /hub/events")
+        check(ev["events"][0]["telemetry"]["driver_name"] == "JOCKO", "event carries telemetry (driver name)")
+        st, ev2 = hub("GET", f"/hub/events?since={ev['last_id']}")
+        check(ev2["events"] == [], "since= returns only newer events")
+        st, t = hub("GET", "/hub/telemetry")
+        check({"next_stop_miles", "next_stop_eta_s", "driver_name", "stop_active"} <= set(t["telemetry"]), "telemetry has next stop and driver fields")
+        poke(0xFF7002, "0003")
+
         # many clients: upstream rate stays bounded
         t0 = time.time()
         up0 = hub("GET", "/hub")[1]["upstream"]["requests"]
@@ -171,6 +207,7 @@ def main():
         check(wait_for(lambda: any(l.startswith("desertbus,") for l in influx_lines), 5), "telemetry points written to InfluxDB")
         check(any(l.startswith("dashboard_hub,") and "connected=false" in l for l in influx_lines),
               "hub health records the disconnect")
+        check(any(l.startswith("desertbus_event,") and "event=crash" in l for l in influx_lines), "crash event written to InfluxDB")
         check(FakeInflux.last_auth == "Token secret" and "bucket=desertbus" in FakeInflux.last_path, "InfluxDB v2 auth and bucket")
         sample = next(l for l in influx_lines if l.startswith("desertbus,"))
         print("     sample:", sample[:160], "...")
@@ -186,6 +223,7 @@ def main():
             if p.poll() is None:
                 p.kill()
         influx.shutdown()
+        hookd.shutdown()
         hub_log.close()
         print("--- hub log (tail):")
         print("".join(open(f"{tmp}/hub.log").readlines()[-12:]))
