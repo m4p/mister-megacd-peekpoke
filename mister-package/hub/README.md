@@ -309,13 +309,59 @@ InfluxDB 1.x: `--influx-url http://localhost:8086 --influx-db desertbus [--influ
 Points are buffered (up to `--influx-buffer`, 200 000) while InfluxDB is down and written
 when it is back; batches InfluxDB rejects as malformed are dropped and logged.
 
-| Measurement | Written | Content |
-|---|---|---|
-| `desertbus` | every `--influx-interval` (1 s) | all [telemetry](#telemetry) fields plus `paused`, `frame`, `held` (only `in_game`, `game_state`, `paused`, `frame`, `held` while Desert Bus is not running) |
-| `desertbus_event` | per event | tag `event`, fields `count` = 1, `details` (JSON) |
-| `dashboard_hub` | every `--influx-interval` | `connected`, `core_present`, `upstream_rps`, `upstream_latency_ms_p50`, `upstream_latency_ms_max`, `disconnects`, `clients`, `client_requests`, `cache_hits`, `forwarded`, `demand_ranges`, `influx_buffered` |
+Three measurements, all tagged `host` (`--influx-tag-host`, default the MiSTer's host
+name). Fields without a value at that moment (e.g. `next_stop_eta_s` while standing) are
+left out of the point. Integers are written as InfluxDB integers (`42i`).
 
-All carry the tag `host` (`--influx-tag-host`, default the MiSTer's host name).
+**`desertbus`**: game telemetry, every `--influx-interval` (1 s), only while the hub is
+connected to the MiSTer and the telemetry is fresh (≤ 5 s old). While Desert Bus is not
+running (`in_game` false) a point carries only `in_game`, `game_state`, `paused`, `frame`,
+`held`.
+
+| Field | Type | Content |
+|---|---|---|
+| `in_game` | bool | Desert Bus is running |
+| `game_state` | int | 0 menus/interlude, 1-2 stalled, 3 driving, 4-5 towed, 6-9 arrival |
+| `speed_raw`, `speed_mph` | int, float | speed (0x6000 = 45 mph) |
+| `lateral_raw`, `lateral_norm`, `offroad` | int, float, bool | position on the road (−1 left shoulder … +1 right) |
+| `clock_hour`, `clock_minute` | int | in-game clock |
+| `distance_raw`, `leg_miles` | int, float | distance on the current leg |
+| `odometer_miles`, `points` | float, int | odometer and completed legs |
+| `palette`, `daynight_parity`, `daynight_fixed`, `phase` | int, int, bool, string | day/night (`day`, `night`, `dawn`, `dusk`, `twilight`) |
+| `return_leg` | bool | Las Vegas → Tucson leg |
+| `driver_name` | string | e.g. `JOCKO` |
+| `next_stop_raw`, `next_stop_miles`, `next_stop_eta_s`, `stop_mode` | int, float, int, string | next bus stop, its distance and ETA |
+| `stop_active`, `stop_visible`, `stop_progress` | bool, bool, int | bus stop sign object |
+| `splat_visible`, `splat_x` | bool, int | windshield bug splat |
+| `paused`, `frame`, `held` | bool, int, string | from the bridge's `/status`: paused, frame counter, held buttons (comma-separated) |
+
+The meaning and memory address of each game field: [Telemetry](#telemetry).
+
+**`desertbus_event`**: one point per [game event](#game-events-and-outgoing-webhooks), at
+the time it happened.
+
+| Tag / field | Type | Content |
+|---|---|---|
+| tag `event` | | `bus_stop`, `bus_stop_missed`, `crash`, `point`, `bug_splat` |
+| `count` | int | always 1 (sum it to count events) |
+| `details` | string | the event's details as JSON, e.g. `{"leg_miles": 0.89, "stopped_s": 16.4}` |
+
+**`dashboard_hub`**: hub health, every `--influx-interval`.
+
+| Field | Type | Content |
+|---|---|---|
+| `connected` | bool | MiSTer bridge reachable |
+| `core_present` | bool | the dashboard core is loaded |
+| `upstream_rps` | float | requests per second to the MiSTer |
+| `upstream_latency_ms_p50`, `upstream_latency_ms_max` | float | latency of the last 500 requests to the MiSTer |
+| `disconnects` | int | connection losses since the hub started |
+| `clients` | int | dashboards/clients seen in the last 30 s |
+| `client_requests`, `cache_hits`, `forwarded` | int | requests from clients, answered from the cache, sent to the MiSTer (cumulative) |
+| `demand_ranges` | int | extra memory ranges watched for clients |
+| `influx_buffered` | int | points waiting while InfluxDB is unreachable |
+
+Not written to InfluxDB: actions (button presses, patches), autopilot status and webhook
+deliveries; they are in the hub's log.
 
 ```flux
 from(bucket: "desertbus")
