@@ -7,8 +7,7 @@ URL (e.g. http://hub-host:8766) as the server.
 
     python3 dashboard_hub.py --mister http://mister.lan:8765
     python3 dashboard_hub.py --mister http://mister.lan:8765 \
-        --influx-url http://localhost:8086 --influx-org home --influx-bucket desertbus \
-        --influx-token-file ~/.influx-token
+        --influx-bucket desertbus --influx-token-file ~/.influx-token   # https://serv-influxdb.desertbus.org/
 
 What it does:
   - Keeps one keep-alive connection to the bridge and sends every request through a single
@@ -51,6 +50,7 @@ import urllib.parse
 import urllib.request
 
 VERSION = "1.0.0"
+DEFAULT_INFLUX_URL = "https://serv-influxdb.desertbus.org/"
 log = logging.getLogger("hub")
 
 BUS_MAX = 64          # bridge limit for /bus-peek
@@ -1369,7 +1369,8 @@ def main():
     ap.add_argument("--patches", default=None, help="patch definitions (dashboard.html or .json; default: --dashboard)")
     ap.add_argument("--no-release", action="store_true", help="do not release buttons on connect/shutdown")
     g = ap.add_argument_group("InfluxDB (optional)")
-    g.add_argument("--influx-url", default=os.environ.get("INFLUX_URL"), help="e.g. http://localhost:8086")
+    g.add_argument("--influx-url", default=os.environ.get("INFLUX_URL", DEFAULT_INFLUX_URL),
+                   help=f"InfluxDB server (default {DEFAULT_INFLUX_URL}); writing starts once a bucket or database is set")
     g.add_argument("--influx-org", default=os.environ.get("INFLUX_ORG"), help="v2: organisation")
     g.add_argument("--influx-bucket", default=os.environ.get("INFLUX_BUCKET"), help="v2: bucket")
     g.add_argument("--influx-token", default=os.environ.get("INFLUX_TOKEN"), help="v2: API token (or INFLUX_TOKEN)")
@@ -1398,8 +1399,9 @@ def main():
     if args.influx_token_file:
         with open(os.path.expanduser(args.influx_token_file)) as f:
             args.influx_token = f.read().strip()
-    if args.influx_url and not (args.influx_bucket or args.influx_db):
-        ap.error("--influx-url needs --influx-bucket (v2) or --influx-db (v1)")
+    influx_on = bool(args.influx_bucket or args.influx_db)
+    if not influx_on and (any(a.startswith("--influx-url") for a in sys.argv) or "INFLUX_URL" in os.environ):
+        ap.error("--influx-url needs --influx-bucket (v2/v3) or --influx-db (v1)")
 
     handlers = [logging.StreamHandler()]
     if args.log_file:
@@ -1429,7 +1431,7 @@ def main():
 
     host, _, port = args.listen.rpartition(":")
     server = Hub((host or "0.0.0.0", int(port)), up, cache, poller, args)
-    server.influx = Influx(args) if args.influx_url else None
+    server.influx = Influx(args) if influx_on else None
     webhooks = Webhooks(args.webhook, args.webhook_header, args.webhook_timeout, args.webhook_retries)
     poller.events = EventLog(args, poller, webhooks, lambda: server.influx)
     server.actions = Actions(server, load_patches(args.patches or args.dashboard))

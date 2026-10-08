@@ -4,8 +4,8 @@
 # Extra options are passed on, e.g. InfluxDB settings:
 #
 #   ./run-hub.sh http://<mister-ip>:8765
-#   ./run-hub.sh http://<mister-ip>:8765 --influx-url http://localhost:8086 \
-#       --influx-org home --influx-bucket desertbus      # token in INFLUX_TOKEN
+#   ./run-hub.sh http://<mister-ip>:8765 --influx-bucket desertbus   # token in INFLUX_TOKEN;
+#       server https://serv-influxdb.desertbus.org/ unless --influx-url is given
 #
 # Then open http://localhost:8766/ and connect the dashboard to http://<mac-ip>:8766.
 HERE=$(cd "$(dirname "$0")" && pwd)

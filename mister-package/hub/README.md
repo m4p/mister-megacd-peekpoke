@@ -301,11 +301,14 @@ There is **no authentication** (same as the bridge): keep the hub on a trusted L
 
 ```bash
 export INFLUX_TOKEN=...                   # or --influx-token-file ~/.influx-token
-python3 dashboard_hub.py --mister http://mister.lan:8765 \
-    --influx-url http://localhost:8086 --influx-org home --influx-bucket desertbus
+python3 dashboard_hub.py --mister http://mister.lan:8765 --influx-bucket desertbus
 ```
 
-InfluxDB 1.x: `--influx-url http://localhost:8086 --influx-db desertbus [--influx-user u --influx-password p]`.
+The server defaults to **`https://serv-influxdb.desertbus.org/`** (token required). Writing
+starts as soon as a bucket (`--influx-bucket`, InfluxDB 2.x/3 API with token) or a database
+(`--influx-db`, InfluxDB 1.x API) is given; without either, the hub runs without InfluxDB.
+Another server: `--influx-url http://localhost:8086` (or `INFLUX_URL`), e.g. 1.x:
+`--influx-url http://localhost:8086 --influx-db desertbus [--influx-user u --influx-password p]`.
 Points are buffered (up to `--influx-buffer`, 200 000) while InfluxDB is down and written
 when it is back; batches InfluxDB rejects as malformed are dropped and logged.
 
@@ -393,8 +396,8 @@ Grafana annotations from events: query `desertbus_event` and use the `event` tag
 | `--webhook-timeout S` | 5 | per webhook attempt |
 | `--webhook-retries N` | 3 | retries per delivery (backoff 1, 2, 4 s …) |
 | `--stop-min-progress N` / `--stop-max-progress N` | 55 / 85 | "at the stop" window of the bus stop sign |
-| `--influx-url URL` | none (or `INFLUX_URL`) | enable InfluxDB |
-| `--influx-org`, `--influx-bucket`, `--influx-token`, `--influx-token-file` | (env `INFLUX_ORG`, `INFLUX_BUCKET`, `INFLUX_TOKEN`) | InfluxDB 2.x |
+| `--influx-url URL` | `https://serv-influxdb.desertbus.org/` (or `INFLUX_URL`) | InfluxDB server; writing starts once `--influx-bucket` or `--influx-db` is set |
+| `--influx-org`, `--influx-bucket`, `--influx-token`, `--influx-token-file` | (env `INFLUX_ORG`, `INFLUX_BUCKET`, `INFLUX_TOKEN`) | InfluxDB 2.x/3 (org optional for 3) |
 | `--influx-db`, `--influx-user`, `--influx-password` | (env `INFLUX_DB`, …) | InfluxDB 1.x |
 | `--influx-interval S` / `--influx-flush S` / `--influx-buffer N` | 1 / 2 / 200000 | point rate, write rate, buffer while down |
 | `--influx-tag-host NAME` | MiSTer host | `host` tag |

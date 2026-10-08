@@ -121,9 +121,9 @@ order, reconnects by itself, and can log telemetry to InfluxDB.
 
 ```bash
 hub/run-hub.sh http://<mister-ip>:8765
-# with InfluxDB 2.x:
+# with InfluxDB (logs to serv-influxdb.desertbus.org unless --influx-url is given):
 INFLUX_TOKEN=... hub/run-hub.sh http://<mister-ip>:8765 \
-    --influx-url http://localhost:8086 --influx-org home --influx-bucket desertbus
+    --influx-bucket desertbus             # server https://serv-influxdb.desertbus.org/ by default
 ```
 
 Open http://localhost:8766/ (the hub serves the dashboard page) and connect it to
