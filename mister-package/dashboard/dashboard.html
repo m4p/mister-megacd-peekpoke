@@ -613,7 +613,8 @@ function startPolling(sess) {
 // ---- game events (served by the dashboard hub's /hub/events) ----
 const EVENT_LABELS = {
   bug_splat: "\u{1FAB0} bug splat", crash: "\u{1F4A5} crash", point: "\u{1F3C1} point scored",
-  bus_stop: "\u{1F68F} bus stop served", bus_stop_missed: "\u{1F68F} bus stop missed"
+  bus_stop: "\u{1F68F} bus stop served", bus_stop_missed: "\u{1F68F} bus stop missed",
+  honk: "\u{1F4EF} honk"
 };
 let eventsLastId = 0, eventsLoaded = false, eventsBusy = false;
 const eventItems = [];
@@ -633,6 +634,7 @@ function describeEvent(e) {
     case "crash": return `${d.cause || "off the road"} at mile ${d.leg_miles}`;
     case "point": return `${d.points} point${d.points === 1 ? "" : "s"} (${d.leg} leg done)`;
     case "bug_splat": return `at mile ${d.leg_miles}`;
+    case "honk": return `at mile ${d.leg_miles}, ${Number(d.speed_mph).toFixed(1)} mph`;
     default: return JSON.stringify(d);
   }
 }

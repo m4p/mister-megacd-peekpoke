@@ -209,6 +209,34 @@ def main():
         check(hub("GET", "/hub/action/pause")[0] == 405, "actions need POST")
         hub("POST", "/hub/action/patch/throttle/off", {})
 
+        # honk: horn messages (cmd 0x11, sound 4) appended to the Sub-CPU command ring
+        def ring_push(wptr, hexmsgs):
+            poke(wptr, hexmsgs)
+            new = wptr + len(hexmsgs) // 2
+            poke(0xFF0938, f"{new:08x}")
+            return new
+        poke(0xFF7002, "0003")
+        poke(0xFF0938, "00ff0ac8")
+        time.sleep(0.6)                                    # hub learns the pointer
+        st, ev = hub("GET", "/hub/events?since=0"); last = ev["last_id"]
+        w = ring_push(0xFF0AC8, "11020004" "11020001" "11020004")
+        check(wait_for(lambda: [e["event"] for e in hub("GET", f"/hub/events?since={last}")[1]["events"]] == ["honk", "honk"], 3),
+              "two horn messages -> two honk events (other sound ignored)")
+        check(wait_for(lambda: sum(1 for _, b in hooks if b.get("event") == "honk") >= 2, 3), "honk webhooks delivered")
+        st, ev = hub("GET", "/hub/events?since=0"); last = ev["last_id"]
+        w = ring_push(0xFF0B38, "11020004")                # wraps: 2 bytes at the end, 2 at the start
+        poke(0xFF093C, "0004")
+        poke(0xFF0938, "00ff093e")
+        check(wait_for(lambda: [e["event"] for e in hub("GET", f"/hub/events?since={last}")[1]["events"]] == ["honk"], 3),
+              "honk across the ring wrap")
+        poke(0xFF7002, "0000")
+        time.sleep(0.4)
+        st, ev = hub("GET", "/hub/events?since=0"); last = ev["last_id"]
+        ring_push(0xFF093E, "11020004")
+        time.sleep(1.0)
+        check(hub("GET", f"/hub/events?since={last}")[1]["events"] == [], "horn sound outside driving is not a honk")
+        poke(0xFF7002, "0003")
+
         # many clients: upstream rate stays bounded
         t0 = time.time()
         up0 = hub("GET", "/hub")[1]["upstream"]["requests"]

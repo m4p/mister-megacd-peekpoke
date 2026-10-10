@@ -47,7 +47,7 @@ Check it: `curl -s http://localhost:8766/hub` shows `"connected": true`.
 |---|---|---|
 | One client for the MiSTer | any number of dashboards; the MiSTer sees ~30-40 requests/s in total | [Protecting the MiSTer](#how-the-hub-protects-the-mister) |
 | Decoded telemetry | speed, position, clock, distance, odometer, points, day phase, **next bus stop + ETA**, **driver name** | [Telemetry](#telemetry) |
-| Game events | `bus_stop`, `bus_stop_missed`, `crash`, `point`, `bug_splat` | [Events](#game-events-and-outgoing-webhooks) |
+| Game events | `bus_stop`, `bus_stop_missed`, `crash`, `point`, `bug_splat`, `honk` | [Events](#game-events-and-outgoing-webhooks) |
 | Outgoing webhooks | each event POSTed as JSON to URLs you choose, with retries | [Events](#game-events-and-outgoing-webhooks) |
 | Actions (incoming webhooks) | every dashboard button as an HTTP endpoint: pause, autopilot, savestates, all 9 patches | [Actions](#actions-incoming-webhooks) |
 | Autopilot | runs in the hub, shared by all dashboards and webhooks | [Autopilot](#autopilot) |
@@ -100,7 +100,8 @@ Pause, savestates and patch buttons go through the hub's normal write path.
 
 ## Game events and outgoing webhooks
 
-The hub watches the telemetry and raises these events. All were verified live on the MiSTer.
+The hub watches the telemetry and raises these events. All except `honk` were verified live
+on the MiSTer.
 
 | Event | Fires when | `details` |
 |---|---|---|
@@ -109,6 +110,7 @@ The hub watches the telemetry and raises these events. All were verified live on
 | `crash` | driving ends in an off-road stall (state 1/2, `cause`: `off the road`) or in a tow after standing still ~30 s (state 4, `cause`: `stood still too long`) | `leg_miles`, `state`, `cause`, `lateral_raw` |
 | `point` | the leg is complete: the distance reaches 360 mi | `points`, `odometer_miles`, `leg` (`outbound`/`return`) |
 | `bug_splat` | the windshield bug splat appears while driving | `x`, `leg_miles` |
+| `honk` | the driver honks (START while driving). One event per honk, also for several honks between two polls; latency up to one poll (0.25 s) plus delivery. Not yet verified on hardware | `leg_miles`, `speed_mph` |
 
 Events are kept for `GET /hub/events?since=ID` (last 500), shown in the dashboard's Events
 card, written to InfluxDB (`desertbus_event`), and POSTed to webhooks:
@@ -136,6 +138,15 @@ Payload (`POST`, `Content-Type: application/json`):
 ```
 
 `id` increases by one per event, so receivers can detect duplicates or gaps.
+
+**How honks are detected.** In the driving state the game answers a START press
+(`$FF7DA0` → `$FFB356`) by sending "play sound 4" (the horn) to the Sub CPU: TRAP #5
+command `0x11`, payload `0004`. These commands go through a 0x200-byte ring in work RAM
+(`$FF093C`–`$FF0B3B`, messages `[cmd][len][payload]`, write pointer `$FF0938` holding the
+absolute address, wrapping byte by byte; enqueue code `$FF056C`). The bytes stay in the ring
+after the Sub CPU has taken them, so the hub reads the write pointer with every poll and,
+when it moved, reads just the new bytes and counts `11 02 00 04` messages. Sound 4 sent
+outside the driving state (interlude scripts can play it too) is not counted.
 
 ## Actions (incoming webhooks)
 
@@ -345,7 +356,7 @@ the time it happened.
 
 | Tag / field | Type | Content |
 |---|---|---|
-| tag `event` | | `bus_stop`, `bus_stop_missed`, `crash`, `point`, `bug_splat` |
+| tag `event` | | `bus_stop`, `bus_stop_missed`, `crash`, `point`, `bug_splat`, `honk` |
 | `count` | int | always 1 (sum it to count events) |
 | `details` | string | the event's details as JSON, e.g. `{"leg_miles": 0.89, "stopped_s": 16.4}` |
 
@@ -382,7 +393,7 @@ Grafana annotations from events: query `desertbus_event` and use the `event` tag
 | `--listen ADDR:PORT` | `0.0.0.0:8766` | where dashboards and automation connect |
 | `--dashboard FILE` | none | serve this `dashboard.html` at `/`; its patch table drives the patch actions |
 | `--patches FILE` | `--dashboard` | patch definitions (`dashboard.html` or a JSON list) |
-| `--interval S` | 0.25 | telemetry poll interval |
+| `--interval S` | 0.25 | telemetry poll interval (also the honk detection latency) |
 | `--max-age S` | 2 × interval | oldest cached telemetry served to clients |
 | `--slow-interval S` | 2 | bus stop table, patch signature, driver name |
 | `--demand-interval S` | 0.5 | other ranges clients read |

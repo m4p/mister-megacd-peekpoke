@@ -76,6 +76,40 @@ TELEMETRY = {
     "stop_progress": (0xFF164E, 2),    # bus stop sign approach progress (6..140; beside the bus at ~55..85)
 }
 # Read every --slow-interval: they change rarely (patches, name entry)
+# Sub-CPU command ring (TRAP #5, enqueue code at $FF056C): messages [cmd][len][payload],
+# written byte by byte at the absolute address in SYSCMD_WPTR, wrapping from RING_END to
+# RING_START. The bytes stay in the ring after the Sub CPU has taken them. The horn (START
+# while driving, $FF7DA0 -> $FFB356) is command 0x11 "play sound" with sound 4.
+SYSCMD_WPTR = (0xFF0938, 4)
+RING_START, RING_END = 0xFF093C, 0xFF0B3C
+HORN_MESSAGE = (0x11, b"\x00\x04")
+
+
+def ring_messages(data):
+    """Parse consecutive [cmd][len][payload] messages; stops at a truncated message."""
+    out, i = [], 0
+    while i + 2 <= len(data):
+        cmd, n = data[i], data[i + 1]
+        if i + 2 + n > len(data):
+            break
+        out.append((cmd, bytes(data[i + 2:i + 2 + n])))
+        i += 2 + n
+    return out
+
+
+def ring_span(old, new):
+    """(address, length) reads that cover the ring bytes written from old up to new."""
+    size = RING_END - RING_START
+    count = (new - old) % size
+    spans, addr = [], old
+    while count:
+        n = min(count, RING_END - addr, BUS_MAX)
+        spans.append((addr, n))
+        addr = RING_START if addr + n >= RING_END else addr + n
+        count -= n
+    return spans
+
+
 SLOW_TELEMETRY = {
     "stop_table": (0xFFBA2E, 24),      # six 32-bit bus stop distances
     "stop_code": (0xFFBA54, 4),        # 80FC nnnn = "Bus Stop Every Mile" patch (stop every nnnn units)
@@ -457,7 +491,8 @@ class Poller:
         self.stop = threading.Event()
         self.last_demand = {"bus": 0.0, "vram": 0.0}
         self.thread = threading.Thread(target=self._run, name="poller", daemon=True)
-        self.hot = plan_reads(list(TELEMETRY.values()), BUS_MAX)
+        self.hot = plan_reads(list(TELEMETRY.values()) + [SYSCMD_WPTR], BUS_MAX)
+        self.ring_wptr = None          # last seen command ring write pointer (honk detection)
         self.slow = plan_reads(list(SLOW_TELEMETRY.values()), BUS_MAX)
         self.last_slow = 0.0
         self.events = None             # EventLog, set by main()
@@ -523,6 +558,38 @@ class Poller:
             self.telemetry = (tel, time.time())
             if self.events:
                 self.events.detector.update(tel)
+                self._track_horn(tel)
+
+    def _track_horn(self, tel):
+        """Count horn messages added to the Sub-CPU command ring since the last poll."""
+        raw = self.cache.read("bus", *SYSCMD_WPTR)
+        if raw is None:
+            return
+        wptr = int.from_bytes(raw, "big")
+        if not RING_START <= wptr < RING_END:
+            self.ring_wptr = None          # not Desert Bus / not initialised
+            return
+        old, self.ring_wptr = self.ring_wptr, wptr
+        if old is None or old == wptr:
+            return
+        if (wptr - old) % (RING_END - RING_START) > 0x1C0:
+            log.warning("command ring moved by more than it holds; horn detection resynchronised")
+            return
+        data = b""
+        for addr, n in ring_span(old, wptr):
+            st, j = self.up.request_json("POST", "/bus-peek", {"bus": "main68k", "address": addr, "length": n})
+            if st != 200:
+                self.ring_wptr = old           # try again next poll
+                return
+            data += bytes.fromhex(j["data"])
+        honks = sum(1 for cmd, payload in ring_messages(data) if (cmd, payload) == HORN_MESSAGE)
+        # sound 4 is the horn; only a START press while driving sends it as a honk
+        if honks and tel["in_game"] and tel["game_state"] == 3:
+            for _ in range(honks):
+                self.events.emit("honk", {"leg_miles": round(tel["leg_miles"], 2), "speed_mph": tel["speed_mph"]})
+
+    def reset_horn(self):
+        self.ring_wptr = None
 
     def _run(self):
         while not self.stop.is_set():
@@ -539,12 +606,14 @@ class Poller:
 
 # --------------------------------------------------------------------------- events
 
-EVENTS = ("bug_splat", "crash", "point", "bus_stop", "bus_stop_missed")
+EVENTS = ("bug_splat", "crash", "point", "bus_stop", "bus_stop_missed", "honk")
 
 
 class EventDetector:
     """Turns successive telemetry samples into game events.
 
+    honk             the driver honks (START while driving): one per horn message the game
+                     sends to the Sub CPU, found in the command ring (Poller._track_horn)
     bug_splat        the windshield splat appears (slot 10 shows sprite 0x48/0x49 on screen)
     crash            driving (state 3) ends in an off-road stall (state 1 or 2), or in a tow
                      (state 4) after standing still for ~30 s ($FF8590: stall timer $FF6FFC)
@@ -1416,6 +1485,7 @@ def main():
     def connected(epoch_changed):
         if poller.events:
             poller.events.detector.reset()
+        poller.reset_horn()
         if epoch_changed:
             cache.clear()
         else:

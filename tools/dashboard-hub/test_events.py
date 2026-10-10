@@ -128,6 +128,28 @@ class CacheFreshness(unittest.TestCase):
         self.assertEqual(c.read("bus", 0xFF6FEA, 2), b"\x56\x78")
 
 
+class HornRing(unittest.TestCase):
+    # ring contents from a live work RAM snapshot (driving), then two honks and another sound
+    SNAPSHOT = bytes.fromhex("0b04405008000c04040004000c04017004000f020001100200010f020001100200010f020001")
+
+    def test_messages(self):
+        msgs = hub.ring_messages(self.SNAPSHOT + bytes.fromhex("11020004 11020004 11020001".replace(" ", "")))
+        self.assertEqual(sum(m == hub.HORN_MESSAGE for m in msgs), 2)
+        self.assertIn((0x11, b"\x00\x01"), msgs)
+
+    def test_truncated_message_is_not_counted(self):
+        self.assertEqual(hub.ring_messages(bytes.fromhex("110200")), [])
+
+    def test_span_wraps_at_the_ring_end(self):
+        spans = hub.ring_span(hub.RING_END - 2, hub.RING_START + 2)
+        self.assertEqual(spans, [(hub.RING_END - 2, 2), (hub.RING_START, 2)])
+
+    def test_span_splits_into_bus_reads(self):
+        spans = hub.ring_span(hub.RING_START, hub.RING_START + 100)
+        self.assertEqual(spans, [(hub.RING_START, 64), (hub.RING_START + 64, 36)])
+        self.assertEqual(hub.ring_span(hub.RING_START + 8, hub.RING_START + 8), [])
+
+
 class BusStops(unittest.TestCase):
     TABLE = b"".join(v.to_bytes(4, "big") for v in (0x640, 0x18380, 0x37140, 0x490C0, 0x66BC0, 0x81B00))
     STOCK = bytes.fromhex("43f900ff")
