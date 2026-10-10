@@ -100,8 +100,7 @@ Pause, savestates and patch buttons go through the hub's normal write path.
 
 ## Game events and outgoing webhooks
 
-The hub watches the telemetry and raises these events. All except `honk` were verified live
-on the MiSTer.
+The hub watches the telemetry and raises these events. All were verified live on the MiSTer.
 
 | Event | Fires when | `details` |
 |---|---|---|
@@ -110,7 +109,7 @@ on the MiSTer.
 | `crash` | driving ends in an off-road stall (state 1/2, `cause`: `off the road`) or in a tow after standing still ~30 s (state 4, `cause`: `stood still too long`) | `leg_miles`, `state`, `cause`, `lateral_raw` |
 | `point` | the leg is complete: the distance reaches 360 mi | `points`, `odometer_miles`, `leg` (`outbound`/`return`) |
 | `bug_splat` | the windshield bug splat appears while driving | `x`, `leg_miles` |
-| `honk` | the driver honks (START while driving). One event per honk, also for several honks between two polls; latency up to one poll (0.25 s) plus delivery. Not yet verified on hardware | `leg_miles`, `speed_mph` |
+| `honk` | the driver honks (START while driving). One event per honk, also for several honks between two polls; latency up to one poll (0.25 s) plus delivery (measured: ~0.4 s from button press to the event) | `leg_miles`, `speed_mph` |
 
 Events are kept for `GET /hub/events?since=ID` (last 500), shown in the dashboard's Events
 card, written to InfluxDB (`desertbus_event`), and POSTed to webhooks:
