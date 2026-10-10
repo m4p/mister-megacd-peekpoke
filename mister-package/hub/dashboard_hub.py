@@ -493,6 +493,7 @@ class Poller:
         self.thread = threading.Thread(target=self._run, name="poller", daemon=True)
         self.hot = plan_reads(list(TELEMETRY.values()) + [SYSCMD_WPTR], BUS_MAX)
         self.ring_wptr = None          # last seen command ring write pointer (honk detection)
+        self.actions = None            # Actions, set by main() (re-applies "reapply" patches)
         self.slow = plan_reads(list(SLOW_TELEMETRY.values()), BUS_MAX)
         self.last_slow = 0.0
         self.events = None             # EventLog, set by main()
@@ -543,7 +544,8 @@ class Poller:
         for addr, length in self.hot:
             self._read("bus", addr, length)
         t = now()
-        if t - self.last_slow >= self.args.slow_interval:
+        maintain = t - self.last_slow >= self.args.slow_interval
+        if maintain:
             self.last_slow = t
             for addr, length in self.slow:
                 self._read("bus", addr, length)
@@ -559,6 +561,8 @@ class Poller:
             if self.events:
                 self.events.detector.update(tel)
                 self._track_horn(tel)
+            if maintain and self.actions:
+                self.actions.maintain(tel)
 
     def _track_horn(self, tel):
         """Count horn messages added to the Sub-CPU command ring since the last poll."""
@@ -893,6 +897,8 @@ class Actions:
     def __init__(self, hub, patches):
         self.hub, self.patches = hub, patches
         self.autopilot = Autopilot(hub)
+        self.sticky = {}               # patch id -> state to keep applied ("reapply" patches)
+        self.reapplied = {}            # patch id -> time of the last re-apply
 
     def describe(self):
         return {
@@ -909,6 +915,7 @@ class Actions:
             "patches": [{"id": p["id"], "name": p["name"], "states": {st["key"]: st["label"] for st in p["states"]}}
                         for p in self.patches],
             "autopilot": self.autopilot.status,
+            "kept_applied": dict(self.sticky),
         }
 
     def run(self, name, body, extra):
@@ -965,9 +972,7 @@ class Actions:
         if not state:
             raise ActionError(404, "unknown_state", f"{pid}: unknown state {key!r}; states: {', '.join(st['key'] for st in patch['states'])}")
         if patch.get("vram"):
-            self._call("/poke", {"domain": "vram", "address": patch["vram"]["address"], "data": state["data"], "encoding": "hex"})
-            for ep in ("/state/save", "/state/load"):
-                self._call(ep, {"path": "dashboard-cache-refresh.gp0"})
+            self._write_vram(patch["vram"]["address"], state["data"])
         else:
             writes = [(site["address"], state["hex"][i]) for i, site in enumerate(patch["sites"])]
             writes += [(e["address"], e["hex"]) for e in state.get("extra") or []]
@@ -988,7 +993,50 @@ class Actions:
             if own_pause:
                 self._call("/resume")
         log.info("patch %s -> %s", pid, key)
-        return {"ok": True, "patch": pid, "state": key, "label": state["label"]}
+        if patch.get("reapply"):
+            # remember the choice; the stock state needs no re-applying (the game restores it)
+            if key == patch["states"][0]["key"]:
+                self.sticky.pop(pid, None)
+            else:
+                self.sticky[pid] = key
+        return {"ok": True, "patch": pid, "state": key, "label": state["label"],
+                "reapply": pid in self.sticky}
+
+    def _write_vram(self, address, data_hex):
+        """VRAM patch: write in pieces of at most the bridge's limit, then refresh the
+        VDP pattern cache with the reserved savestate name (a no-op on the MiSTer)."""
+        limit = ((self.hub.up.caps or {}).get("limits") or {}).get("vram_max_bytes") or VRAM_MAX
+        for i in range(0, len(data_hex), limit * 2):
+            self._call("/poke", {"domain": "vram", "address": address + i // 2,
+                                 "data": data_hex[i:i + limit * 2], "encoding": "hex"})
+        for ep in ("/state/save", "/state/load"):
+            self._call(ep, {"path": "dashboard-cache-refresh.gp0"})
+
+    def maintain(self, tel):
+        """Re-apply 'reapply' patches the game has overwritten (it reloads the stock
+        graphics whenever the driving scene starts). Runs only while driving, where the
+        patched tiles exist; checks each patch's signature tile."""
+        if not self.sticky or not tel.get("in_game") or tel.get("game_state") != 3:
+            return
+        for pid, key in list(self.sticky.items()):
+            patch = next((p for p in self.patches if p["id"] == pid), None)
+            state = patch and next((st for st in patch["states"] if st["key"] == key), None)
+            if not state or not patch.get("vram"):
+                continue
+            sig = patch["vram"]["sig"]
+            st, j = self.hub.up.request_json("POST", "/peek", {"domain": "vram", "address": patch["vram"]["address"] + sig["offset"],
+                                                               "length": sig["length"]}, Upstream.P_POLL)
+            if st != 200 or j.get("data", "").lower() == state["sig"].lower():
+                continue
+            if now() - self.reapplied.get(pid, 0.0) < 5.0:
+                continue                                   # give a write time to land
+            self.reapplied[pid] = now()
+            try:
+                self._write_vram(patch["vram"]["address"], state["data"])
+                self.hub.stats["reapplied"] += 1
+                log.info("re-applied patch %s -> %s (the game had reloaded its graphics)", pid, key)
+            except (ActionError, UpstreamDown) as e:
+                log.warning("re-applying patch %s failed: %s", pid, e)
 
     def patch_status(self):
         out = {}
@@ -1505,6 +1553,7 @@ def main():
     webhooks = Webhooks(args.webhook, args.webhook_header, args.webhook_timeout, args.webhook_retries)
     poller.events = EventLog(args, poller, webhooks, lambda: server.influx)
     server.actions = Actions(server, load_patches(args.patches or args.dashboard))
+    poller.actions = server.actions
 
     stop = threading.Event()
     up.start()

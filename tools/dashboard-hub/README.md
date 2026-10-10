@@ -49,7 +49,7 @@ Check it: `curl -s http://localhost:8766/hub` shows `"connected": true`.
 | Decoded telemetry | speed, position, clock, distance, odometer, points, day phase, **next bus stop + ETA**, **driver name** | [Telemetry](#telemetry) |
 | Game events | `bus_stop`, `bus_stop_missed`, `crash`, `point`, `bug_splat`, `honk` | [Events](#game-events-and-outgoing-webhooks) |
 | Outgoing webhooks | each event POSTed as JSON to URLs you choose, with retries | [Events](#game-events-and-outgoing-webhooks) |
-| Actions (incoming webhooks) | every dashboard button as an HTTP endpoint: pause, autopilot, savestates, all 9 patches | [Actions](#actions-incoming-webhooks) |
+| Actions (incoming webhooks) | every dashboard button as an HTTP endpoint: pause, autopilot, savestates, all 10 patches | [Actions](#actions-incoming-webhooks) |
 | Autopilot | runs in the hub, shared by all dashboards and webhooks | [Autopilot](#autopilot) |
 | InfluxDB | telemetry every second, events, hub health; buffered while InfluxDB is down | [InfluxDB](#influxdb) |
 | Robustness | reconnects with backoff, releases the pad on connect and shutdown | [Protecting the MiSTer](#how-the-hub-protects-the-mister) |
@@ -186,6 +186,7 @@ with `400` (bad body), `404` (unknown action, patch or state), `405` (not a POST
 | `daynight` | Fix Day/Night Cycle | `off`, `on` | correct dawn/dusk schedule |
 | `bugsplat` | Windshield Bug Splat | `off`: Remove, `on`: Splat! | triggers (or removes) the bug splat |
 | `freshener` | Air Freshener Art | `off`: Stock Tree, `on`: FRESHY | swaps the air freshener sprite (VRAM) |
+| `mirror` | Rear-View Mirror | `off`: Stock, `key`: Chroma Key (red) | fills the mirror glass with solid red for chroma keying (VRAM, 2400 bytes); **kept applied** by the hub, see below |
 
 - `GET /hub/actions` lists all actions and every patch with its states.
 - `GET /hub/patches` reads the current state of each patch from the game:
@@ -197,6 +198,22 @@ with `400` (bad body), `404` (unknown action, patch or state), `405` (not a POST
   page's button writes: patches with several memory sites are written while paused (and
   resumed if the hub did the pausing); the air freshener is a VRAM write followed by the VDP
   cache refresh.
+
+**Patches kept applied.** The game reloads some graphics whenever the driving scene starts
+(after a tow, a new leg, a new game), which silently undoes VRAM patches. Patches marked
+`"reapply": true` in the patch table (currently `mirror`) are remembered when set through
+the hub (a dashboard button connected through the hub, or the action). While the game is
+driving, the hub checks the patch's signature tile every `--slow-interval` (2 s) and
+writes the patch again if the game has restored the stock graphics (logged as
+`re-applied patch …`). Choosing the stock state (`off`) ends this. `GET /hub/actions`
+shows the kept patches as `kept_applied`. They are kept in memory only: after a hub
+restart, apply the patch once more.
+
+**Chroma keying the mirror.** `patch/mirror/key` fills the glass with palette entry 1:
+`#CE0000` in the MiSTer's output by day (`#DA0000` in the palette), darker at dusk and
+night (down to about `#480000`). Key only inside **x 187–268, y 8–43** of the 320×224
+picture (the cab sways by ~2 px; scale for your capture); the frame around the glass is
+black and gray, and the air freshener below it is green.
 
 **Tip:** apply `steering/off` at the start of a session if you want the bus to stay on the
 road without anyone steering.

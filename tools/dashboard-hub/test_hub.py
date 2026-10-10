@@ -177,7 +177,7 @@ def main():
         def peek(addr, n):
             return call(BRIDGE_PORT, "POST", "/bus-peek", {"bus": "main68k", "address": addr, "length": n})[1]["data"]
         st, acts = hub("GET", "/hub/actions")
-        check(st == 200 and len(acts["patches"]) == 9 and "autopilot" in acts["actions"], f"/hub/actions lists actions and {len(acts.get('patches', []))} patches")
+        check(st == 200 and len(acts["patches"]) == 10 and "autopilot" in acts["actions"], f"/hub/actions lists actions and {len(acts.get('patches', []))} patches")
         st, j = hub("POST", "/hub/action/patch/steering/off", {})
         check(st == 200 and peek(0xFF842C, 8) == "4e714e714e714e71", "patch via URL form writes the site")
         st, j = hub("POST", "/hub/action/patch", {"id": "throttle", "state": "max"})
@@ -236,6 +236,25 @@ def main():
         time.sleep(1.0)
         check(hub("GET", f"/hub/events?since={last}")[1]["events"] == [], "horn sound outside driving is not a honk")
         poke(0xFF7002, "0003")
+
+        # mirror chroma key: VRAM patch over the bridge's 2048-byte limit, kept applied by the hub
+        import re as _re
+        page = open(args.dashboard).read()
+        mirror = next(p for p in json.loads(_re.search(r'id="patchData">\n(.*?)\n</script>', page, _re.S).group(1)) if p["id"] == "mirror")
+        sig_addr = int(mirror["vram"]["address"], 16) + mirror["vram"]["sig"]["offset"]
+        def vram_sig():
+            return call(BRIDGE_PORT, "POST", "/peek", {"domain": "vram", "address": sig_addr, "length": 32})[1]["data"]
+        poke(0xFF7002, "0003")
+        st, j = hub("POST", "/hub/action/patch/mirror/key", {})
+        check(st == 200 and j.get("reapply") is True, f"mirror key applied and kept ({st} {j})")
+        check(vram_sig() == mirror["states"][1]["sig"], "mirror tiles written (2400 bytes in pieces)")
+        stock = mirror["states"][0]["data"]
+        for off in range(0, len(stock), 4096):             # the game reloads the stock mirror
+            call(BRIDGE_PORT, "POST", "/poke", {"domain": "vram", "address": int(mirror["vram"]["address"], 16) + off // 2, "data": stock[off:off + 4096]})
+        check(vram_sig() == mirror["states"][0]["sig"], "stock mirror reloaded behind the hub's back")
+        check(wait_for(lambda: vram_sig() == mirror["states"][1]["sig"], 6), "hub re-applies the chroma key")
+        st, j = hub("POST", "/hub/action/patch/mirror/off", {})
+        check(st == 200 and j.get("reapply") is False and hub("GET", "/hub/actions")[1]["kept_applied"] == {}, "Stock ends re-applying")
 
         # many clients: upstream rate stays bounded
         t0 = time.time()
