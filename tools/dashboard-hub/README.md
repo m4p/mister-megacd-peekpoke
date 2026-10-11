@@ -326,6 +326,10 @@ There is **no authentication** (same as the bridge): keep the hub on a trusted L
 
 ## InfluxDB
 
+The full description of the data (every field with type, unit and meaning, event details,
+timing and gaps, interpretation, example queries for InfluxDB 1/2/3, Grafana ideas) is in
+**[INFLUXDB.md](INFLUXDB.md)**.
+
 ```bash
 export INFLUX_TOKEN=...                   # or --influx-token-file ~/.influx-token
 python3 dashboard_hub.py --mister http://mister.lan:8765 --influx-bucket desertbus
