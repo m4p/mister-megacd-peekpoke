@@ -894,11 +894,41 @@ class Actions:
     """Every dashboard button as a hub action, for incoming webhooks and automation."""
     NAMES = ("pause", "resume", "toggle-pause", "autopilot", "save-state", "load-fullauto", "patch")
 
-    def __init__(self, hub, patches):
+    def __init__(self, hub, patches, state_file=None):
         self.hub, self.patches = hub, patches
         self.autopilot = Autopilot(hub)
         self.sticky = {}               # patch id -> state to keep applied ("reapply" patches)
         self.reapplied = {}            # patch id -> time of the last re-apply
+        self.state_file = state_file   # kept patches survive hub restarts (None = memory only)
+        self._load_state()
+
+    def _load_state(self):
+        """Kept patches from the state file. Nothing is kept unless it was turned on before:
+        without a file every patch stays as the game draws it."""
+        if not self.state_file or not os.path.isfile(self.state_file):
+            return
+        try:
+            kept = json.load(open(self.state_file)).get("kept_applied", {})
+        except (OSError, ValueError, AttributeError) as e:
+            log.warning("ignoring unreadable state file %s: %s", self.state_file, e)
+            return
+        for pid, key in kept.items():
+            patch = next((p for p in self.patches if p["id"] == pid and p.get("reapply")), None)
+            if patch and any(st["key"] == key for st in patch["states"][1:]):
+                self.sticky[pid] = key
+                log.info("keeping patch %s -> %s (from %s)", pid, key, self.state_file)
+
+    def _save_state(self):
+        if not self.state_file:
+            return
+        try:
+            os.makedirs(os.path.dirname(self.state_file) or ".", exist_ok=True)
+            tmp = self.state_file + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump({"kept_applied": self.sticky}, f, indent=1)
+            os.replace(tmp, self.state_file)
+        except OSError as e:
+            log.warning("could not save %s: %s", self.state_file, e)
 
     def describe(self):
         return {
@@ -971,7 +1001,13 @@ class Actions:
         state = next((st for st in patch["states"] if st["key"] == key), None)
         if not state:
             raise ActionError(404, "unknown_state", f"{pid}: unknown state {key!r}; states: {', '.join(st['key'] for st in patch['states'])}")
-        if patch.get("vram"):
+        tel = (self.hub.poller.telemetry or ({}, 0))[0]
+        driving = tel.get("in_game") and tel.get("game_state") == 3
+        if patch.get("vram") and patch.get("reapply") and not driving:
+            # these tiles only exist in the driving scene; elsewhere the same VRAM holds other
+            # graphics. Record the choice; maintain() writes it once the bus is driving.
+            log.info("patch %s -> %s recorded; written when driving", pid, key)
+        elif patch.get("vram"):
             self._write_vram(patch["vram"]["address"], state["data"])
         else:
             writes = [(site["address"], state["hex"][i]) for i, site in enumerate(patch["sites"])]
@@ -999,8 +1035,10 @@ class Actions:
                 self.sticky.pop(pid, None)
             else:
                 self.sticky[pid] = key
+            self._save_state()
         return {"ok": True, "patch": pid, "state": key, "label": state["label"],
-                "reapply": pid in self.sticky}
+                "reapply": pid in self.sticky,
+                "pending": bool(patch.get("vram") and patch.get("reapply") and not driving)}
 
     def _write_vram(self, address, data_hex):
         """VRAM patch: write in pieces of at most the bridge's limit, then refresh the
@@ -1484,6 +1522,8 @@ def main():
     ap.add_argument("--timeout", type=float, default=3.0, help="upstream request timeout in s (default 3)")
     ap.add_argument("--dashboard", default=None, help="serve this dashboard.html at http://<hub>/ (its patch table also drives /hub/action/patch)")
     ap.add_argument("--patches", default=None, help="patch definitions (dashboard.html or .json; default: --dashboard)")
+    ap.add_argument("--state-file", default=os.path.expanduser("~/.config/dashboard-hub/state.json"),
+                    help="where kept patches (e.g. the mirror chroma key) are saved across restarts; '' = memory only")
     ap.add_argument("--no-release", action="store_true", help="do not release buttons on connect/shutdown")
     g = ap.add_argument_group("InfluxDB (optional)")
     g.add_argument("--influx-url", default=os.environ.get("INFLUX_URL", DEFAULT_INFLUX_URL),
@@ -1552,7 +1592,7 @@ def main():
     server.influx = Influx(args) if influx_on else None
     webhooks = Webhooks(args.webhook, args.webhook_header, args.webhook_timeout, args.webhook_retries)
     poller.events = EventLog(args, poller, webhooks, lambda: server.influx)
-    server.actions = Actions(server, load_patches(args.patches or args.dashboard))
+    server.actions = Actions(server, load_patches(args.patches or args.dashboard), args.state_file or None)
     poller.actions = server.actions
 
     stop = threading.Event()

@@ -206,8 +206,14 @@ the hub (a dashboard button connected through the hub, or the action). While the
 driving, the hub checks the patch's signature tile every `--slow-interval` (2 s) and
 writes the patch again if the game has restored the stock graphics (logged as
 `re-applied patch …`). Choosing the stock state (`off`) ends this. `GET /hub/actions`
-shows the kept patches as `kept_applied`. They are kept in memory only: after a hub
-restart, apply the patch once more.
+shows the kept patches as `kept_applied`.
+
+Kept patches are **off by default** and **persist once enabled**: the choice is saved in
+`--state-file` (`~/.config/dashboard-hub/state.json`) and loaded when the hub starts, so the
+mirror stays keyed across hub restarts until you choose Stock. Enabling one while the game is
+not driving (menus, timecard: the mirror's VRAM then holds other graphics) only records the
+choice; the hub writes it as soon as the bus is driving (the answer says `"pending": true`).
+`--state-file ''` keeps the choice in memory only.
 
 **Chroma keying the mirror.** `patch/mirror/key` fills the glass with palette entry 1:
 `#CE0000` in the MiSTer's output by day (`#DA0000` in the palette), darker at dusk and
@@ -422,6 +428,7 @@ Grafana annotations from events: query `desertbus_event` and use the `event` tag
 | `--max-rate N` | 60 | requests per second to the MiSTer, at most |
 | `--timeout S` | 3 | per request to the MiSTer |
 | `--no-release` | off | do not release buttons on connect/shutdown |
+| `--state-file FILE` | `~/.config/dashboard-hub/state.json` | kept patches (e.g. the mirror chroma key) saved across restarts; `''` = memory only |
 | `--webhook EVENT=URL` | none | outgoing webhook (repeatable; `*` = all events) |
 | `--webhook-header 'Name: value'` | none | extra webhook header (repeatable) |
 | `--webhook-timeout S` | 5 | per webhook attempt |

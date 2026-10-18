@@ -150,6 +150,33 @@ class HornRing(unittest.TestCase):
         self.assertEqual(hub.ring_span(hub.RING_START + 8, hub.RING_START + 8), [])
 
 
+class KeptPatches(unittest.TestCase):
+    PATCHES = [{"id": "mirror", "reapply": True, "states": [{"key": "off"}, {"key": "key"}]},
+               {"id": "steering", "states": [{"key": "off"}, {"key": "r1"}]}]
+
+    def test_off_by_default_and_persisted_when_enabled(self):
+        import os, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "sub", "state.json")
+        a = hub.Actions(object(), self.PATCHES, path)
+        self.assertEqual(a.sticky, {}, "nothing kept without a state file")
+        a.sticky["mirror"] = "key"; a._save_state()
+        self.assertEqual(hub.Actions(object(), self.PATCHES, path).sticky, {"mirror": "key"}, "survives a restart")
+        a.sticky.pop("mirror"); a._save_state()
+        self.assertEqual(hub.Actions(object(), self.PATCHES, path).sticky, {}, "Stock removes it")
+
+    def test_invalid_entries_are_ignored(self):
+        import json, os, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "state.json")
+        json.dump({"kept_applied": {"mirror": "off", "steering": "r1", "nope": "key"}}, open(path, "w"))
+        self.assertEqual(hub.Actions(object(), self.PATCHES, path).sticky, {})
+        open(path, "w").write("not json")
+        self.assertEqual(hub.Actions(object(), self.PATCHES, path).sticky, {})
+
+    def test_memory_only(self):
+        a = hub.Actions(object(), self.PATCHES, None)
+        a.sticky["mirror"] = "key"; a._save_state()          # no file, no error
+
+
 class BusStops(unittest.TestCase):
     TABLE = b"".join(v.to_bytes(4, "big") for v in (0x640, 0x18380, 0x37140, 0x490C0, 0x66BC0, 0x81B00))
     STOCK = bytes.fromhex("43f900ff")
