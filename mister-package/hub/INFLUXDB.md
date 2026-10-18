@@ -181,6 +181,10 @@ Written every `--influx-interval`, also while the MiSTer is unreachable (that is
 
 ## Queries
 
+Python: [`query_latest.py`](query_latest.py) prints the newest record and, with
+`--events N`, the newest events (`INFLUX_TOKEN=... python3 query_latest.py --events 5`;
+`--json` for raw rows, `--host` to pick one hub). Standard library only.
+
 SQL (InfluxDB 3):
 
 ```sql
